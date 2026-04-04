@@ -129,3 +129,30 @@ def list_events(
     ).all()
 
     return events
+
+
+# GET SINGLE EVENT
+
+@router.get("/{event_id}")
+
+def get_event(
+
+    event_id: str,
+
+    db: Session = Depends(get_db)
+
+):
+
+    event = db.query(
+        Event
+    ).filter(
+        Event.id == event_id
+    ).first()
+
+    if not event:
+
+        return {
+            "status": "event_not_found"
+        }
+
+    return event
