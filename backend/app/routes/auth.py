@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from app.database import get_db
 
 from app.models.user import User
-
+from app.schemas.auth import LoginRequest
 from app.utils.auth.password import (
     verify_password
 )
@@ -23,7 +23,6 @@ from app.utils.auth.email_sender import send_verification_email
 import datetime
 
 
-from app.models.user import User
 from app.utils.auth.jwt_handler import create_access_token
 
 
@@ -33,8 +32,7 @@ router = APIRouter()
 @router.post("/login-password")
 def login_password(
 
-    email: str,
-    password: str,
+    data: LoginRequest,
 
     db: Session = Depends(get_db)
 
@@ -43,7 +41,7 @@ def login_password(
     # Find user
 
     user = db.query(User).filter(
-        User.email == email
+        User.email == data.email
     ).first()
 
     if not user:
@@ -60,7 +58,7 @@ def login_password(
 
     if not verify_password(
 
-        password,
+        data.password,
         user.password_hash
 
     ):

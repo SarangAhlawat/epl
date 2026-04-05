@@ -8,6 +8,8 @@ from app.models import user
 from app.models import event
 from app.models import attendee
 from app.models import checkin
+from app.models import form_question
+from app.models import form_response
 
 from app.routes import admin
 from app.routes import user as user_routes
@@ -25,11 +27,18 @@ app = FastAPI(
 
 # CORS
 
+origins = [
+
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+
+]
+
 app.add_middleware(
 
     CORSMiddleware,
 
-    allow_origins=["*"],
+    allow_origins=origins,
 
     allow_credentials=True,
 
