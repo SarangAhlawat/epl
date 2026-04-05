@@ -1,11 +1,7 @@
-import {
-  BrowserRouter,
-  Routes,
-  Route
-} from "react-router-dom";
+import { BrowserRouter, Routes, Route }
+from "react-router-dom";
 
-import EventList from "../pages/EventList";
-import EventDetail from "../pages/EventDetail";
+import Landing from "../pages/Landing";
 
 function AppRoutes() {
 
@@ -17,12 +13,7 @@ function AppRoutes() {
 
         <Route
           path="/"
-          element={<EventList />}
-        />
-
-        <Route
-          path="/event/:eventId"
-          element={<EventDetail />}
+          element={<Landing />}
         />
 
       </Routes>
@@ -30,6 +21,7 @@ function AppRoutes() {
     </BrowserRouter>
 
   );
+
 }
 
 export default AppRoutes;
