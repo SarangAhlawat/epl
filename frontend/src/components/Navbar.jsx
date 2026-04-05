@@ -3,11 +3,13 @@ import logo from "../assets/logo.png";
 
 import { motion } from "framer-motion";
 
+const MotionNav = motion.nav;
+
 function Navbar() {
 
   return (
 
-    <motion.nav
+    <MotionNav
 
       initial={{ y: -80 }}
       animate={{ y: 0 }}
@@ -27,6 +29,7 @@ function Navbar() {
             <img
 
               src={logo}
+              alt="GetEvents logo"
 
               className="h-10"
 
@@ -94,7 +97,7 @@ function Navbar() {
 
       </div>
 
-    </motion.nav>
+    </MotionNav>
 
   );
 

@@ -1,6 +1,9 @@
 import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 
+const MotionH1 = motion.h1;
+const MotionP = motion.p;
+
 function Hero() {
 
   return (
@@ -9,7 +12,7 @@ function Hero() {
 
       <div className="max-w-7xl mx-auto px-6 py-24 text-center">
 
-        <motion.h1
+        <MotionH1
 
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
@@ -28,9 +31,9 @@ function Hero() {
 
           Scan Seamlessly.
 
-        </motion.h1>
+        </MotionH1>
 
-        <motion.p
+        <MotionP
 
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -43,7 +46,7 @@ function Hero() {
 
           QR passes and check-ins.
 
-        </motion.p>
+        </MotionP>
 
         {/* Action Buttons */}
 

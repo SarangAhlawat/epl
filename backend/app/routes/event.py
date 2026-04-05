@@ -16,6 +16,10 @@ import uuid
 import datetime
 
 
+from app.models.attendee import Attendee
+from app.models.checkin import Checkin
+
+
 router = APIRouter()
 
 
@@ -156,3 +160,42 @@ def get_event(
         }
 
     return event
+
+
+
+
+@router.get("/{event_id}/stats")
+
+def event_stats(
+
+    event_id: str,
+    db: Session = Depends(get_db)
+
+):
+
+    total = db.query(
+        Attendee
+    ).filter(
+        Attendee.event_id == event_id
+    ).count()
+
+    checked = db.query(
+        Checkin
+    ).join(
+        Attendee,
+        Checkin.attendee_id == Attendee.id
+    ).filter(
+        Attendee.event_id == event_id,
+        Checkin.checked_in == True
+    ).count()
+
+    return {
+
+        "total_registered": total,
+
+        "checked_in": checked,
+
+        "pending":
+            total - checked
+
+    }

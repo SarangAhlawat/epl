@@ -4,7 +4,7 @@ from "react";
 
 import { AuthContext }
 
-from "../context/AuthContext";
+from "../context/auth-context";
 
 export default function useAuth() {
 

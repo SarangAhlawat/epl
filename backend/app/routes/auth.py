@@ -77,6 +77,8 @@ def login_password(
 
         "user_id": str(user.id),
 
+        "organization_id": str(user.organization_id),
+
         "role": user.role
 
     })
@@ -230,6 +232,8 @@ def login_with_otp(
     token = create_access_token({
 
         "user_id": str(user.id),
+
+        "organization_id": str(user.organization_id),
 
         "role": user.role
 
