@@ -2,23 +2,49 @@ function Footer() {
 
   return (
 
-    <footer className="bg-blue-900 text-white py-10 mt-20">
+    <footer className="bg-slate-950 text-white py-14 mt-20">
 
-      <div className="max-w-7xl mx-auto px-6 text-center">
+      <div className="max-w-7xl mx-auto px-4 md:px-6">
 
-        <h3 className="text-xl font-semibold">
+        <div className="grid md:grid-cols-4 gap-8">
+          <div>
+            <h3 className="text-xl font-semibold">
+              GetEvents
+            </h3>
+            <p className="mt-3 text-slate-300">
+              Premium event operations from registration to check-in.
+            </p>
+          </div>
 
-          GetEvents
+          <div>
+            <h4 className="font-semibold">Platform</h4>
+            <ul className="mt-3 space-y-2 text-slate-300 text-sm">
+              <li>Public Events</li>
+              <li>Form Builder</li>
+              <li>Excel Import</li>
+            </ul>
+          </div>
 
-        </h3>
+          <div>
+            <h4 className="font-semibold">Operations</h4>
+            <ul className="mt-3 space-y-2 text-slate-300 text-sm">
+              <li>Mailing Workflows</li>
+              <li>QR Check-in</li>
+              <li>Attendance Analytics</li>
+            </ul>
+          </div>
 
-        <p className="mt-3 text-blue-200">
+          <div>
+            <h4 className="font-semibold">Team Roles</h4>
+            <ul className="mt-3 space-y-2 text-slate-300 text-sm">
+              <li>Admin</li>
+              <li>Organizer</li>
+              <li>Volunteer</li>
+            </ul>
+          </div>
+        </div>
 
-          Host. Register. Scan. Done.
-
-        </p>
-
-        <p className="mt-6 text-sm text-blue-300">
+        <p className="mt-10 text-sm text-slate-400 border-t border-slate-800 pt-6 text-center">
 
           © 2026 GetEvents. All rights reserved.
 

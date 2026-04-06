@@ -54,3 +54,34 @@ def upload_file_to_s3(
     file_url = f"https://{settings.AWS_BUCKET_NAME}.s3.amazonaws.com/{key}"
 
     return file_url
+
+
+def upload_bytes_to_s3(
+
+    data: bytes,
+
+    folder: str,
+
+    extension: str,
+
+    content_type: str
+
+):
+
+    filename = f"{uuid.uuid4()}.{extension}"
+
+    key = f"{folder}/{filename}"
+
+    s3_client.put_object(
+
+        Bucket=settings.AWS_BUCKET_NAME,
+
+        Key=key,
+
+        Body=data,
+
+        ContentType=content_type
+
+    )
+
+    return f"https://{settings.AWS_BUCKET_NAME}.s3.amazonaws.com/{key}"

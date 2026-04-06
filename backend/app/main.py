@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import engine, Base
+from app.schema_patch import apply_schema_patches
 
 from app.models import organization
 from app.models import user
@@ -10,6 +11,7 @@ from app.models import attendee
 from app.models import checkin
 from app.models import form_question
 from app.models import form_response
+from app.models import mailing_campaign
 
 from app.routes import admin
 from app.routes import user as user_routes
@@ -17,6 +19,7 @@ from app.routes import auth
 
 from app.routes import event
 from app.routes import form
+from app.routes import mailing
 
 
 app = FastAPI(
@@ -55,6 +58,8 @@ Base.metadata.create_all(
     bind=engine
 )
 
+apply_schema_patches(engine)
+
 
 # Routers
 
@@ -88,6 +93,12 @@ app.include_router(
     form.router,
     prefix="/form",
     tags=["Form Builder"]
+)
+
+app.include_router(
+    mailing.router,
+    prefix="/events",
+    tags=["Mailing"]
 )
 
 

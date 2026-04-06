@@ -6,6 +6,7 @@ from "../layouts/DashboardLayout";
 
 import API
 from "../services/api";
+import { decodeJwtPayload } from "../utils/jwt";
 
 import { Link }
 from "react-router-dom";
@@ -18,9 +19,22 @@ function EventListDashboard() {
   const [error,
     setError] = useState("");
 
+  const token = localStorage.getItem("token");
+  const claims = decodeJwtPayload(token);
+  const organizationId = claims?.organization_id;
+  const sessionError = !organizationId
+    ? "Session details missing. Please log in again."
+    : "";
+
   useEffect(() => {
 
-    API.get("/events/list")
+    if (!organizationId) {
+      return;
+    }
+
+    API.get("/events/list", {
+      params: { organization_id: organizationId }
+    })
 
       .then(res => {
 
@@ -31,7 +45,7 @@ function EventListDashboard() {
         setError("Failed to load events.");
       });
 
-  }, []);
+  }, [organizationId]);
 
   return (
 
@@ -43,11 +57,11 @@ function EventListDashboard() {
 
       </h2>
 
-      {error && (
-        <p className="text-red-600 mb-4">{error}</p>
+      {(sessionError || error) && (
+        <p className="text-red-600 mb-4">{sessionError || error}</p>
       )}
 
-      {!error && events.length === 0 && (
+      {!error && !sessionError && events.length === 0 && (
         <p className="text-gray-600">No events found yet.</p>
       )}
 

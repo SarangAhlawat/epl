@@ -1,4 +1,16 @@
-function EventCard() {
+import { Link } from "react-router-dom";
+
+function EventCard({
+  event
+}) {
+
+  if (!event) {
+    return null;
+  }
+
+  const formattedDate = event.date
+    ? new Date(event.date).toLocaleString()
+    : "Date not set";
 
   return (
 
@@ -6,21 +18,26 @@ function EventCard() {
 
       <h3 className="font-semibold">
 
-        Event Title
+        {event.title}
 
       </h3>
 
+      <p className="text-gray-500 text-sm mt-1">
+        {event.venue || "Venue not set"}
+      </p>
+
       <p className="text-gray-500 text-sm">
 
-        Total Registered: 120
+        {formattedDate}
 
       </p>
 
-      <button className="mt-3 text-blue-600 font-medium">
-
+      <Link
+        to={`/dashboard/event/${event.id}`}
+        className="mt-3 inline-block text-blue-600 font-medium"
+      >
         View Details →
-
-      </button>
+      </Link>
 
     </div>
 

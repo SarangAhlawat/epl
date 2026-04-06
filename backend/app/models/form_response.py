@@ -5,6 +5,7 @@ from sqlalchemy import String
 from sqlalchemy import ForeignKey
 
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 
 from app.database import Base
 
@@ -31,4 +32,14 @@ class FormResponse(Base):
 
     response_value = Column(
         String
+    )
+
+    attendee = relationship(
+        "Attendee",
+        back_populates="form_responses"
+    )
+
+    question = relationship(
+        "FormQuestion",
+        back_populates="form_responses"
     )

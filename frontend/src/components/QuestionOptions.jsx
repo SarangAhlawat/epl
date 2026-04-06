@@ -1,75 +1,70 @@
-import { useState }
+import { useState } from "react";
 
-from "react";
+function QuestionOptions({ fieldType, options, onOptionsChange }) {
 
-function QuestionOptions({
-
-  fieldType
-
-}) {
-
-  const [options,
-    setOptions] =
-      useState([]);
-
-  const [value,
-    setValue] =
-      useState("");
+  const [value, setValue] = useState("");
 
   if (
 
-    fieldType !== "dropdown"
-    && fieldType !== "radio"
-    && fieldType !== "checkbox"
+    fieldType !== "dropdown" &&
 
-  ) return null;
+    fieldType !== "radio" &&
+
+    fieldType !== "checkbox"
+
+  ) {
+
+    return null;
+
+  }
 
   const addOption = () => {
 
-    setOptions([
+    const v = value.trim();
 
-      ...options,
+    if (!v) return;
 
-      value
-
-    ]);
+    onOptionsChange([...options, v]);
 
     setValue("");
 
   };
 
+  const removeAt = (i) => {
+
+    onOptionsChange(options.filter((_, j) => j !== i));
+
+  };
+
   return (
 
-    <div>
+    <div className="border-t border-slate-100 pt-3 mt-1">
 
-      <h4 className="font-medium mb-2">
-
-        Options
-
-      </h4>
+      <h4 className="font-medium mb-2 text-sm text-slate-700">Answer options</h4>
 
       <div className="flex gap-2">
 
         <input
 
-          placeholder="Add Option"
+          placeholder="Add option"
 
           value={value}
 
-          onChange={e =>
-            setValue(
-              e.target.value
-            )}
+          onChange={(e) => setValue(e.target.value)}
 
-          className="border p-2 flex-1 rounded"
+          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addOption())}
+
+          className="border border-slate-200 p-2 flex-1 rounded-lg text-sm"
 
         />
 
         <button
 
+          type="button"
+
           onClick={addOption}
 
-          className="bg-gray-200 px-3 rounded"
+          className="bg-slate-100 px-3 rounded-lg text-sm font-medium"
 
         >
 
@@ -79,13 +74,33 @@ function QuestionOptions({
 
       </div>
 
-      <ul className="mt-2">
+      <ul className="mt-2 space-y-1">
 
-        {options.map(opt => (
+        {options.map((opt, i) => (
 
-          <li key={opt}>
+          <li
 
-            {opt}
+            key={`${opt}-${i}`}
+
+            className="flex justify-between items-center text-sm bg-slate-50 px-2 py-1 rounded"
+
+          >
+
+            <span>{opt}</span>
+
+            <button
+
+              type="button"
+
+              className="text-red-600 text-xs"
+
+              onClick={() => removeAt(i)}
+
+            >
+
+              Remove
+
+            </button>
 
           </li>
 

@@ -49,6 +49,16 @@ class Attendee(Base):
 
     source = Column(String)
 
+    pass_mail_status = Column(
+        String,
+        nullable=True
+    )
+
+    other_mail_status = Column(
+        String,
+        nullable=True
+    )
+
     created_at = Column(
         DateTime,
         default=datetime.datetime.utcnow
@@ -62,4 +72,10 @@ class Attendee(Base):
     checkins = relationship(
         "Checkin",
         back_populates="attendee"
+    )
+
+    form_responses = relationship(
+        "FormResponse",
+        back_populates="attendee",
+        cascade="all, delete-orphan"
     )

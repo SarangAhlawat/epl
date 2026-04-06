@@ -3,22 +3,19 @@ import datetime
 
 from sqlalchemy import Column
 from sqlalchemy import String
-from sqlalchemy import Boolean
-from sqlalchemy import Integer
-from sqlalchemy import ForeignKey
-from sqlalchemy import JSON
 from sqlalchemy import DateTime
-
+from sqlalchemy import ForeignKey
+from sqlalchemy import Text
+from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import UUID
-
 from sqlalchemy.orm import relationship
 
 from app.database import Base
 
 
-class FormQuestion(Base):
+class MailingCampaign(Base):
 
-    __tablename__ = "form_questions"
+    __tablename__ = "mailing_campaigns"
 
     id = Column(
         UUID(as_uuid=True),
@@ -28,40 +25,29 @@ class FormQuestion(Base):
 
     event_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("events.id")
+        ForeignKey("events.id"),
+        nullable=False
     )
 
-    question_text = Column(
+    campaign_type = Column(
         String,
         nullable=False
     )
 
-    field_type = Column(
-        String,
-        nullable=False
-    )
+    subject = Column(String, nullable=True)
 
-    is_required = Column(
-        Boolean,
-        default=True
-    )
+    html_body = Column(Text, nullable=True)
 
-    options_json = Column(
-        JSON,
-        nullable=True
-    )
+    attachment_urls = Column(JSON, nullable=True)
 
-    order_index = Column(
-        Integer
-    )
+    log_lines = Column(JSON, nullable=True)
 
     created_at = Column(
         DateTime,
         default=datetime.datetime.utcnow
     )
 
-    form_responses = relationship(
-        "FormResponse",
-        back_populates="question",
-        cascade="all, delete-orphan"
+    event = relationship(
+        "Event",
+        back_populates="mailing_campaigns"
     )

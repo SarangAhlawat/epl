@@ -59,6 +59,11 @@ class Event(Base):
         String
     )
 
+    form_published = Column(
+        Boolean,
+        default=False
+    )
+
     created_by = Column(
         UUID(as_uuid=True)
     )
@@ -76,4 +81,10 @@ class Event(Base):
     attendees = relationship(
         "Attendee",
         back_populates="event"
+    )
+
+    mailing_campaigns = relationship(
+        "MailingCampaign",
+        back_populates="event",
+        cascade="all, delete-orphan"
     )

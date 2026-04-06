@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from sqlalchemy.orm import Session
 from fastapi import Depends
+from fastapi import HTTPException
 
 from app.database import get_db
 
@@ -54,3 +55,47 @@ def add_user(
         "status": "user_added"
 
     }
+
+
+@router.get("/{user_id}")
+def get_user(
+
+    user_id: str,
+
+    db: Session = Depends(get_db)
+
+):
+
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    return user
+
+
+@router.get("/organization/{organization_id}")
+def get_organization(
+
+    organization_id: str,
+
+    db: Session = Depends(get_db)
+
+):
+
+    organization = db.query(Organization).filter(
+        Organization.id == organization_id
+    ).first()
+
+    if not organization:
+        raise HTTPException(
+            status_code=404,
+            detail="Organization not found"
+        )
+
+    return organization

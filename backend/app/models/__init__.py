@@ -8,3 +8,4 @@ from .email_verification import EmailVerification
 
 from .form_question import FormQuestion
 from .form_response import FormResponse
+from .mailing_campaign import MailingCampaign

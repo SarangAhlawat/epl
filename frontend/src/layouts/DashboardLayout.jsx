@@ -5,7 +5,7 @@ function DashboardLayout({ children }) {
 
   return (
 
-    <div className="flex">
+    <div className="flex min-h-screen bg-slate-50">
 
       <Sidebar />
 
@@ -13,9 +13,13 @@ function DashboardLayout({ children }) {
 
         <Topbar />
 
-        <div className="p-6">
+        <div className="p-6 md:p-8">
 
-          {children}
+          <div className="max-w-7xl mx-auto">
+
+            {children}
+
+          </div>
 
         </div>
 
