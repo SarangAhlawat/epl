@@ -20,6 +20,7 @@ from app.routes import auth
 from app.routes import event
 from app.routes import form
 from app.routes import mailing
+from app.routes import health
 
 
 app = FastAPI(
@@ -34,6 +35,7 @@ origins = [
 
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://10.185.152.166:5173",
 
 ]
 
@@ -99,6 +101,12 @@ app.include_router(
     mailing.router,
     prefix="/events",
     tags=["Mailing"]
+)
+
+app.include_router(
+    health.router,
+    prefix="/health",
+    tags=["Health"]
 )
 
 

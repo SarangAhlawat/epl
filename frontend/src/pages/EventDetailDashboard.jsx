@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import DashboardLayout from "../layouts/DashboardLayout";
@@ -9,7 +9,9 @@ import {
   Mail,
   QrCode,
   FileSpreadsheet,
-  RefreshCw
+  RefreshCw,
+  Download,
+  ArrowUpDown
 } from "lucide-react";
 
 function EventDetailDashboard() {
@@ -25,6 +27,10 @@ function EventDetailDashboard() {
   const [error, setError] = useState("");
 
   const [refreshing, setRefreshing] = useState(false);
+  const [sortKey, setSortKey] = useState("checked_in");
+  const [sortDir, setSortDir] = useState("desc");
+  const [filters, setFilters] = useState({});
+  const [showDownloadOptions, setShowDownloadOptions] = useState(false);
 
   const loadAll = useCallback(() => {
 
@@ -78,43 +84,126 @@ function EventDetailDashboard() {
 
   };
 
-  if (error && !event) {
+  const resetAttendee = useCallback(
+    async (attendeeId, fields) => {
+      const label = Array.isArray(fields) ? fields.join(", ") : String(fields || "");
+      const ok = window.confirm(`Mark as not done? This will reset: ${label}`);
+      if (!ok) return;
 
-    return (
+      const body = {
+        pass_url: fields.includes("pass_url"),
+        qr_url: fields.includes("qr_url"),
+        pass_mail_status: fields.includes("pass_mail_status"),
+        other_mail_status: fields.includes("other_mail_status"),
+      };
 
-      <DashboardLayout>
+      try {
+        await API.post(`/events/${eventId}/attendees/${attendeeId}/reset`, body);
+        await loadAll();
+      } catch {
+        alert("Reset failed.");
+      }
+    },
+    [eventId, loadAll]
+  );
 
-        <p className="text-red-600">{error}</p>
+  const qCols = useMemo(() => (sheet?.question_columns || []), [sheet]);
+  const excelCols = useMemo(() => (sheet?.excel_columns || []), [sheet]);
+  const rows = useMemo(() => (sheet?.rows || []), [sheet]);
 
-      </DashboardLayout>
+  const downloadHeaderKeys = useMemo(() => {
+    return [
+      "name",
+      "email",
+      "roll_number",
+      "source",
+      "unique_id",
+      ...excelCols,
+      ...qCols.map((c) => c.label),
+      "pass_url",
+      "qr_url",
+      "pass_mail_status",
+      "other_mail_status",
+      "checked_in",
+    ];
+  }, [excelCols, qCols]);
+  const [downloadCols, setDownloadCols] = useState(downloadHeaderKeys);
+  const [downloadCheckedFirst, setDownloadCheckedFirst] = useState(true);
 
-    );
-
-  }
-
-  if (!event || !stats || !sheet) {
-
-    return (
-
-      <DashboardLayout>
-
-        <p className="text-slate-600">Loading event…</p>
-
-      </DashboardLayout>
-
-    );
-
-  }
-
-  const qCols = sheet.question_columns || [];
-
-  const rows = sheet.rows || [];
+  useEffect(() => {
+    setDownloadCols(downloadHeaderKeys);
+  }, [downloadHeaderKeys]);
 
   const regUrl = `${window.location.origin}/events/${eventId}/register`;
 
   const actionCard =
 
     "flex flex-col h-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-300 hover:shadow-md transition text-left";
+
+  const getCellValue = useCallback(
+    (a, key) => {
+      if (key.startsWith("extra:")) return a.extra_data?.[key.slice(6)] ?? "";
+      if (key.startsWith("form:")) return a.responses?.[key.slice(5)] ?? "";
+      if (key === "checked_in") return a.checked_in ? "Yes" : "No";
+      return a[key] ?? "";
+    },
+    []
+  );
+
+  const displayedRows = useMemo(() => {
+    const filtered = rows.filter((a) => {
+      return Object.entries(filters).every(([k, q]) => {
+        const query = String(q || "").trim().toLowerCase();
+        if (!query) return true;
+        const val = String(getCellValue(a, k) || "").toLowerCase();
+        return val.includes(query);
+      });
+    });
+
+    const dir = sortDir === "asc" ? 1 : -1;
+    filtered.sort((a, b) => {
+      const av = String(getCellValue(a, sortKey) || "").toLowerCase();
+      const bv = String(getCellValue(b, sortKey) || "").toLowerCase();
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+    return filtered;
+  }, [rows, filters, sortKey, sortDir, getCellValue]);
+
+  const setFilter = (k, v) => setFilters((prev) => ({ ...prev, [k]: v }));
+  const onSort = (k) => {
+    if (sortKey === k) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(k);
+    setSortDir("asc");
+  };
+
+  const downloadHref = useMemo(() => {
+    if (!event?.id) return "#";
+    const params = new URLSearchParams();
+    if (downloadCols.length > 0) params.set("include_columns", downloadCols.join(","));
+    params.set("checked_first", downloadCheckedFirst ? "true" : "false");
+    return `${API.defaults.baseURL}/events/${event.id}/attendees/download?${params.toString()}`;
+  }, [downloadCols, downloadCheckedFirst, event?.id]);
+
+  if (error && !event) {
+    return (
+      <DashboardLayout>
+        <p className="text-red-600">{error}</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (!event || !stats || !sheet) {
+    return (
+      <DashboardLayout>
+        <p className="text-slate-600">Loading event…</p>
+      </DashboardLayout>
+    );
+  }
 
   return (
 
@@ -184,7 +273,7 @@ function EventDetailDashboard() {
 
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
 
           <EventStats stats={stats} />
 
@@ -196,7 +285,7 @@ function EventDetailDashboard() {
 
             disabled={refreshing}
 
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 w-full sm:w-auto"
 
           >
 
@@ -298,7 +387,7 @@ function EventDetailDashboard() {
 
             to={`/dashboard/events/${event.id}/excel`}
 
-            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 text-white px-5 py-2.5 text-sm font-semibold shadow-sm hover:bg-emerald-700"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 text-white px-5 py-2.5 text-sm font-semibold shadow-sm hover:bg-emerald-700 w-full sm:w-auto"
 
           >
 
@@ -312,13 +401,22 @@ function EventDetailDashboard() {
 
             to="/dashboard/events"
 
-            className="inline-flex items-center rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 w-full sm:w-auto"
 
           >
 
             All events
 
           </Link>
+
+          <button
+            type="button"
+            onClick={() => setShowDownloadOptions(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 w-full sm:w-auto"
+          >
+            <Download size={17} />
+            Download attendee Excel
+          </button>
 
         </div>
 
@@ -348,15 +446,26 @@ function EventDetailDashboard() {
 
                 <tr className="text-left text-slate-500 border-b border-slate-100 bg-slate-50/80">
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Name</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap">
+                    <button type="button" onClick={() => onSort("name")} className="inline-flex items-center gap-1">Name <ArrowUpDown size={13} /></button>
+                  </th>
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Email</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("email")} className="inline-flex items-center gap-1">Email <ArrowUpDown size={13} /></button></th>
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Roll/ID</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("roll_number")} className="inline-flex items-center gap-1">Roll/ID <ArrowUpDown size={13} /></button></th>
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Source</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("source")} className="inline-flex items-center gap-1">Source <ArrowUpDown size={13} /></button></th>
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Code</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("unique_id")} className="inline-flex items-center gap-1">Code <ArrowUpDown size={13} /></button></th>
+                  {excelCols.map((c) => (
+                    <th
+                      key={`excel-${c}`}
+                      className="py-3 px-3 font-medium whitespace-nowrap max-w-[140px]"
+                      title={c}
+                    >
+                      <button type="button" onClick={() => onSort(`extra:${c}`)} className="inline-flex items-center gap-1"><span className="line-clamp-2">{c}</span> <ArrowUpDown size={13} /></button>
+                    </th>
+                  ))}
 
                   {qCols.map((c) => (
 
@@ -370,29 +479,47 @@ function EventDetailDashboard() {
 
                     >
 
-                      <span className="line-clamp-2">{c.label}</span>
+                      <button type="button" onClick={() => onSort(`form:${c.id}`)} className="inline-flex items-center gap-1"><span className="line-clamp-2">{c.label}</span> <ArrowUpDown size={13} /></button>
 
                     </th>
 
                   ))}
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Pass</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("pass_url")} className="inline-flex items-center gap-1">Pass <ArrowUpDown size={13} /></button></th>
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">QR</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("qr_url")} className="inline-flex items-center gap-1">QR <ArrowUpDown size={13} /></button></th>
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Pass mail</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("pass_mail_status")} className="inline-flex items-center gap-1">Pass mail <ArrowUpDown size={13} /></button></th>
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Other mail</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("other_mail_status")} className="inline-flex items-center gap-1">Other mail <ArrowUpDown size={13} /></button></th>
 
-                  <th className="py-3 px-3 font-medium whitespace-nowrap">Checked in</th>
+                  <th className="py-3 px-3 font-medium whitespace-nowrap"><button type="button" onClick={() => onSort("checked_in")} className="inline-flex items-center gap-1">Checked in <ArrowUpDown size={13} /></button></th>
 
+                </tr>
+                <tr className="border-b border-slate-100 bg-white">
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.name || ""} onChange={(e) => setFilter("name", e.target.value)} placeholder="Filter" /></th>
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.email || ""} onChange={(e) => setFilter("email", e.target.value)} placeholder="Filter" /></th>
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.roll_number || ""} onChange={(e) => setFilter("roll_number", e.target.value)} placeholder="Filter" /></th>
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.source || ""} onChange={(e) => setFilter("source", e.target.value)} placeholder="Filter" /></th>
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.unique_id || ""} onChange={(e) => setFilter("unique_id", e.target.value)} placeholder="Filter" /></th>
+                  {excelCols.map((c) => (
+                    <th key={`fx-${c}`} className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters[`extra:${c}`] || ""} onChange={(e) => setFilter(`extra:${c}`, e.target.value)} placeholder="Filter" /></th>
+                  ))}
+                  {qCols.map((c) => (
+                    <th key={`fq-${c.id}`} className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters[`form:${c.id}`] || ""} onChange={(e) => setFilter(`form:${c.id}`, e.target.value)} placeholder="Filter" /></th>
+                  ))}
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.pass_url || ""} onChange={(e) => setFilter("pass_url", e.target.value)} placeholder="Filter" /></th>
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.qr_url || ""} onChange={(e) => setFilter("qr_url", e.target.value)} placeholder="Filter" /></th>
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.pass_mail_status || ""} onChange={(e) => setFilter("pass_mail_status", e.target.value)} placeholder="Filter" /></th>
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.other_mail_status || ""} onChange={(e) => setFilter("other_mail_status", e.target.value)} placeholder="Filter" /></th>
+                  <th className="px-3 py-2"><input className="w-full border rounded px-2 py-1" value={filters.checked_in || ""} onChange={(e) => setFilter("checked_in", e.target.value)} placeholder="Yes/No" /></th>
                 </tr>
 
               </thead>
 
               <tbody>
 
-                {rows.map((a) => (
+                {displayedRows.map((a) => (
 
                   <tr
 
@@ -423,6 +550,13 @@ function EventDetailDashboard() {
                       {a.unique_id || "—"}
 
                     </td>
+                    {excelCols.map((c) => (
+                      <td key={`excel-cell-${a.id}-${c}`} className="py-2 px-3 max-w-[140px]">
+                        <span className="line-clamp-2 break-words">
+                          {a.extra_data?.[c] ?? "—"}
+                        </span>
+                      </td>
+                    ))}
 
                     {qCols.map((c) => (
 
@@ -442,21 +576,24 @@ function EventDetailDashboard() {
 
                       {a.pass_url ? (
 
-                        <a
-
-                          href={a.pass_url}
-
-                          className="text-blue-600 hover:underline"
-
-                          target="_blank"
-
-                          rel="noreferrer"
-
-                        >
-
-                          Open
-
-                        </a>
+                        <div className="flex items-center gap-2">
+                          <a
+                            href={a.pass_url}
+                            className="text-blue-600 hover:underline"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => resetAttendee(a.id, ["pass_url", "pass_mail_status"])}
+                            className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200"
+                            title="Reset pass + pass mail status"
+                          >
+                            Not done
+                          </button>
+                        </div>
 
                       ) : (
 
@@ -470,21 +607,24 @@ function EventDetailDashboard() {
 
                       {a.qr_url ? (
 
-                        <a
-
-                          href={a.qr_url}
-
-                          className="text-blue-600 hover:underline"
-
-                          target="_blank"
-
-                          rel="noreferrer"
-
-                        >
-
-                          Image
-
-                        </a>
+                        <div className="flex items-center gap-2">
+                          <a
+                            href={a.qr_url}
+                            className="text-blue-600 hover:underline"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Image
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => resetAttendee(a.id, ["qr_url", "pass_url", "pass_mail_status"])}
+                            className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200"
+                            title="Reset QR + pass + pass mail status"
+                          >
+                            Not done
+                          </button>
+                        </div>
 
                       ) : (
 
@@ -496,13 +636,35 @@ function EventDetailDashboard() {
 
                     <td className="py-2 px-3 whitespace-nowrap">
 
-                      {a.pass_mail_status || "—"}
+                      {a.pass_mail_status ? (
+                        <button
+                          type="button"
+                          onClick={() => resetAttendee(a.id, ["pass_mail_status"])}
+                          className="text-left hover:underline"
+                          title="Click to reset to not done"
+                        >
+                          {a.pass_mail_status}
+                        </button>
+                      ) : (
+                        "—"
+                      )}
 
                     </td>
 
                     <td className="py-2 px-3 whitespace-nowrap">
 
-                      {a.other_mail_status || "—"}
+                      {a.other_mail_status ? (
+                        <button
+                          type="button"
+                          onClick={() => resetAttendee(a.id, ["other_mail_status"])}
+                          className="text-left hover:underline"
+                          title="Click to reset to not done"
+                        >
+                          {a.other_mail_status}
+                        </button>
+                      ) : (
+                        "—"
+                      )}
 
                     </td>
 
@@ -530,7 +692,7 @@ function EventDetailDashboard() {
 
           </div>
 
-          {rows.length === 0 && (
+          {displayedRows.length === 0 && (
 
             <p className="text-sm text-slate-600 px-5 py-6">
 
@@ -543,6 +705,57 @@ function EventDetailDashboard() {
           )}
 
         </section>
+
+        {showDownloadOptions && (
+          <div className="fixed inset-0 bg-black/35 z-40 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-xl p-5">
+              <h3 className="text-lg font-semibold text-slate-900">Download options</h3>
+              <p className="text-sm text-slate-600 mt-1">Choose columns to include and sorting preference.</p>
+              <label className="flex items-center gap-2 mt-4 text-sm">
+                <input
+                  type="checkbox"
+                  checked={downloadCheckedFirst}
+                  onChange={(e) => setDownloadCheckedFirst(e.target.checked)}
+                />
+                Checked-in attendees first
+              </label>
+              <div className="mt-4 max-h-60 overflow-y-auto border rounded-lg p-3 grid grid-cols-2 gap-2 text-sm">
+                {downloadHeaderKeys.map((k) => (
+                  <label key={k} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={downloadCols.includes(k)}
+                      onChange={(e) => {
+                        setDownloadCols((prev) =>
+                          e.target.checked ? [...prev, k] : prev.filter((x) => x !== k)
+                        );
+                      }}
+                    />
+                    {k}
+                  </label>
+                ))}
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 border rounded-lg"
+                  onClick={() => setShowDownloadOptions(false)}
+                >
+                  Cancel
+                </button>
+                <a
+                  href={downloadHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg"
+                  onClick={() => setShowDownloadOptions(false)}
+                >
+                  Download
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
 

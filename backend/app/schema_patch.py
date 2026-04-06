@@ -40,6 +40,13 @@ def apply_schema_patches(engine: Engine) -> None:
                 "ADD COLUMN IF NOT EXISTS other_mail_status VARCHAR"
 
             ),
+            text(
+
+                "ALTER TABLE attendees "
+
+                "ADD COLUMN IF NOT EXISTS extra_data JSONB"
+
+            ),
 
             text(
 
@@ -134,6 +141,17 @@ def apply_schema_patches(engine: Engine) -> None:
                     text(
 
                         "ALTER TABLE attendees ADD COLUMN other_mail_status VARCHAR"
+
+                    )
+
+                )
+            if "extra_data" not in anames:
+
+                conn.execute(
+
+                    text(
+
+                        "ALTER TABLE attendees ADD COLUMN extra_data JSON"
 
                     )
 

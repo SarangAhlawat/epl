@@ -65,7 +65,7 @@ function EventListDashboard() {
         <p className="text-gray-600">No events found yet.</p>
       )}
 
-      <div className="grid md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
 
         {events.map(event => (
 

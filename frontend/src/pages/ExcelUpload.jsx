@@ -17,6 +17,10 @@ export default function ExcelUpload() {
 
   const [columns, setColumns] =
     useState([]);
+  const [uploadToken, setUploadToken] = useState("");
+  const [suggestedMapping, setSuggestedMapping] = useState({});
+  const [previewRows, setPreviewRows] = useState([]);
+  const [importedCount, setImportedCount] = useState(0);
 
   const [loading, setLoading] =
     useState(false);
@@ -30,6 +34,7 @@ export default function ExcelUpload() {
 
       try {
         setLoading(true);
+        setSuccess(false);
 
         const data =
           await uploadExcel(
@@ -37,11 +42,19 @@ export default function ExcelUpload() {
             file
           );
 
-        setColumns(data.columns);
+        setColumns(data.columns || []);
+        setUploadToken(data.upload_token || "");
+        setSuggestedMapping(data.suggested_mapping || {});
+        setPreviewRows(data.preview_rows || []);
 
-      } catch {
+      } catch (err) {
+        const detail =
+          err?.response?.data?.detail ||
+          err?.response?.data?.message;
         alert(
-          "Failed to upload Excel"
+          detail
+            ? `Failed to upload file: ${detail}`
+            : "Failed to upload Excel"
         );
       } finally {
         setLoading(false);
@@ -56,17 +69,27 @@ export default function ExcelUpload() {
 
         setLoading(true);
 
-        await importExcel(
+        const result = await importExcel(
           eventId,
+          uploadToken,
           mapping
         );
 
         setSuccess(true);
+        setImportedCount(result?.imported || 0);
+        setColumns([]);
+        setUploadToken("");
+        setPreviewRows([]);
 
-      } catch {
+      } catch (err) {
+        const detail =
+          err?.response?.data?.detail ||
+          err?.response?.data?.message;
 
         alert(
-          "Import failed"
+          detail
+            ? `Import failed: ${detail}`
+            : "Import failed"
         );
 
       } finally {
@@ -86,7 +109,7 @@ export default function ExcelUpload() {
       {success && (
         <div className="bg-green-100 text-green-700 p-4 rounded mb-6">
 
-          Attendees imported successfully!
+          Attendees imported successfully{importedCount ? ` (${importedCount} preview rows)` : ""}!
 
         </div>
       )}
@@ -112,12 +135,40 @@ export default function ExcelUpload() {
       {/* Step 2 — Mapping */}
 
       {columns.length > 0 && (
-        <ColumnMapper
-          columns={columns}
-          onSubmit={
-            handleMappingSubmit
-          }
-        />
+        <div className="space-y-6">
+          <ColumnMapper
+            columns={columns}
+            suggestedMapping={suggestedMapping}
+            onSubmit={
+              handleMappingSubmit
+            }
+          />
+          {previewRows.length > 0 && (
+            <div className="bg-white border rounded-xl p-4">
+              <h3 className="font-semibold mb-2">Preview rows</h3>
+              <div className="overflow-x-auto">
+                <table className="text-sm min-w-full">
+                  <thead>
+                    <tr>
+                      {columns.map((c) => (
+                        <th key={c} className="text-left px-2 py-1 border-b">{c}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewRows.map((r, i) => (
+                      <tr key={i}>
+                        {columns.map((c) => (
+                          <td key={`${i}-${c}`} className="px-2 py-1 border-b">{r[c] || ""}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
     </div>

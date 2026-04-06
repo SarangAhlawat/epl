@@ -5,6 +5,7 @@ from sqlalchemy import Column
 from sqlalchemy import String
 from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
+from sqlalchemy import JSON
 
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -56,6 +57,11 @@ class Attendee(Base):
 
     other_mail_status = Column(
         String,
+        nullable=True
+    )
+
+    extra_data = Column(
+        JSON,
         nullable=True
     )
 

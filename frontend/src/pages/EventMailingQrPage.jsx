@@ -14,6 +14,7 @@ function EventMailingQrPage() {
   const [msg, setMsg] = useState("");
 
   const [log, setLog] = useState([]);
+  const [progress, setProgress] = useState({ total: 0, done: 0, remaining: 0 });
 
   const run = async () => {
 
@@ -22,14 +23,60 @@ function EventMailingQrPage() {
     setMsg("");
 
     setLog([]);
+    setProgress({ total: 0, done: 0, remaining: 0 });
 
     try {
 
-      const res = await API.post(`/events/${eventId}/mailing/generate-qr`);
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API.defaults.baseURL}/events/${eventId}/mailing/generate-qr`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
 
-      setLog(res.data.log || []);
+      if (!res.ok || !res.body) throw new Error("qr_generation_failed");
 
-      setMsg(`QR images generated: ${res.data.generated}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          for (const line of part.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const jsonStr = line.slice(5).trim();
+            if (!jsonStr) continue;
+
+            const data = JSON.parse(jsonStr);
+            if (data.type === "start") {
+              setProgress({
+                total: data.total || 0,
+                done: 0,
+                remaining: data.remaining || 0,
+              });
+            } else if (data.type === "progress") {
+              setProgress({
+                total: data.total || 0,
+                done: data.done || 0,
+                remaining: data.remaining || 0,
+              });
+              if (data.log) setLog((prev) => [...prev, data.log]);
+            } else if (data.type === "done") {
+              setMsg(`QR images generated: ${data.generated}`);
+            }
+          }
+        }
+      }
+
+      // log streamed via SSE
+
+      // message streamed via SSE
 
     } catch {
 
@@ -88,6 +135,13 @@ function EventMailingQrPage() {
           {busy ? "Generating…" : "Generate QR for all attendees"}
 
         </button>
+
+        {busy && progress.total > 0 && (
+          <p className="mt-3 text-sm text-slate-700">
+            Remaining:{" "}
+            <span className="font-semibold">{progress.remaining}</span> / {progress.total}
+          </p>
+        )}
 
         {msg && <p className="mt-4 text-sm text-slate-700">{msg}</p>}
 

@@ -19,10 +19,11 @@ export const uploadExcel = async (eventId, file) => {
   return res.data;
 };
 
-export const importExcel = async (eventId, mapping) => {
+export const importExcel = async (eventId, uploadToken, mapping) => {
   const res = await api.post(
     `/events/${eventId}/import-excel`,
     {
+      upload_token: uploadToken,
       mapping,
     }
   );

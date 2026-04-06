@@ -1,420 +1,494 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { BrowserQRCodeReader, BrowserCodeReader } from "@zxing/browser";
 
 import DashboardLayout from "../layouts/DashboardLayout";
 import API from "../services/api";
-import { ArrowLeft, Search, CheckCircle } from "lucide-react";
+import { ArrowLeft, Search, CheckCircle, XCircle } from "lucide-react";
 
 function EventCheckinPage() {
-
   const { eventId } = useParams();
-
   const [query, setQuery] = useState("");
-
   const [results, setResults] = useState([]);
-
+  const [logs, setLogs] = useState([]);
+  const [mailFields, setMailFields] = useState(["name", "email", "roll_number", "unique_id"]);
+  const [availableMailFields, setAvailableMailFields] = useState([
+    { key: "name", label: "name" },
+    { key: "email", label: "email" },
+    { key: "roll_number", label: "roll_number" },
+    { key: "unique_id", label: "unique_id" },
+  ]);
   const [code, setCode] = useState("");
-
   const [status, setStatus] = useState("");
-
   const [scanning, setScanning] = useState(false);
 
   const videoRef = useRef(null);
-
-  const streamRef = useRef(null);
-
-  const rafRef = useRef(null);
-
+  const readerRef = useRef(null);
+  const controlsRef = useRef(null);
   const scanningRef = useRef(false);
+  const decodeHandledRef = useRef(false);
 
   const search = useCallback(() => {
-
-    API.get(`/events/${eventId}/attendees/search`, { params: { q: query } }).then(
-
-      (res) => {
-
-        setResults(Array.isArray(res.data) ? res.data : []);
-
-      }
-
-    );
-
+    API.get(`/events/${eventId}/attendees/search`, { params: { q: query } }).then((res) => {
+      setResults(Array.isArray(res.data) ? res.data : []);
+    });
   }, [eventId, query]);
 
+  const loadLogs = useCallback(async () => {
+    const res = await API.get(`/events/${eventId}/checkin-logs`, { params: { limit: 5 } });
+    setLogs(Array.isArray(res.data) ? res.data : []);
+  }, [eventId]);
+
+  const loadMailFieldOptions = useCallback(async () => {
+    const res = await API.get(`/events/${eventId}/attendees/sheet`);
+    const excelCols = Array.isArray(res.data?.excel_columns) ? res.data.excel_columns : [];
+    const qCols = Array.isArray(res.data?.question_columns) ? res.data.question_columns : [];
+    setAvailableMailFields([
+      { key: "name", label: "name" },
+      { key: "email", label: "email" },
+      { key: "roll_number", label: "roll_number" },
+      { key: "unique_id", label: "unique_id" },
+      ...excelCols.map((c) => ({ key: `extra:${c}`, label: c })),
+      ...qCols.map((q) => ({ key: `form:${q.id}`, label: q.label })),
+    ]);
+  }, [eventId]);
+
   useEffect(() => {
-
     const t = setTimeout(search, 250);
-
     return () => clearTimeout(t);
-
   }, [query, search]);
 
-  const checkIn = async (payload) => {
+  useEffect(() => {
+    (async () => {
+      try {
+        await loadLogs();
+      } catch {
+        // ignore
+      }
+    })();
+  }, [loadLogs]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        await loadMailFieldOptions();
+      } catch {
+        // ignore
+      }
+    })();
+  }, [loadMailFieldOptions]);
+
+  const checkIn = useCallback(
+    async (payload) => {
+      setStatus("");
+      try {
+        const res = await API.post(`/events/${eventId}/check-in`, {
+          ...payload,
+          send_checkin_mail: true,
+          selected_mail_fields: mailFields,
+        });
+        const mailStatus = res.data?.mail_status ? ` | mail: ${res.data.mail_status}` : "";
+        setStatus(`Checked in: ${res.data.name || res.data.attendee_id}${mailStatus}`);
+        search();
+        await loadLogs();
+      } catch (e) {
+        const d = e.response?.data?.detail;
+        setStatus(typeof d === "string" ? d : "Check-in failed.");
+      }
+    },
+    [eventId, mailFields, search, loadLogs]
+  );
+
+  const uncheckIn = async (payload) => {
     setStatus("");
-
     try {
-
-      const res = await API.post(`/events/${eventId}/check-in`, payload);
-
-      setStatus(`Checked in: ${res.data.name || res.data.attendee_id}`);
-
-      setQuery("");
-
-      setResults([]);
-
-      setCode("");
-
+      const res = await API.post(`/events/${eventId}/uncheck-in`, payload);
+      setStatus(`Unchecked: ${res.data.name || res.data.attendee_id}`);
+      search();
+      await loadLogs();
     } catch (e) {
-
       const d = e.response?.data?.detail;
-
-      setStatus(typeof d === "string" ? d : "Check-in failed.");
-
+      setStatus(typeof d === "string" ? d : "Uncheck failed.");
     }
-
   };
 
   const parseQrPayload = (raw) => {
-
     const s = String(raw || "").trim();
-
     if (!s) return null;
-
     const parts = s.split("|");
-
-    if (parts.length === 2 && parts[0] && parts[1]) {
-
-      return { unique_id: parts[1].trim() };
-
-    }
-
+    if (parts.length === 2 && parts[0] && parts[1]) return { unique_id: parts[1].trim() };
     return { unique_id: s };
-
   };
 
-  const stopScanner = () => {
-
+  const stopScanner = useCallback(() => {
     scanningRef.current = false;
-
     setScanning(false);
-
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-
-    rafRef.current = null;
-
-    if (streamRef.current) {
-
-      streamRef.current.getTracks().forEach((t) => t.stop());
-
-      streamRef.current = null;
-
-    }
-
-    if (videoRef.current) videoRef.current.srcObject = null;
-
-  };
-
-  const startScanner = async () => {
-
-    if (!("BarcodeDetector" in window)) {
-
-      setStatus("Camera QR is not supported in this browser. Paste a code or search.");
-
-      return;
-
-    }
+    decodeHandledRef.current = false;
 
     try {
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-
-        video: { facingMode: "environment" }
-
-      });
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-
-        videoRef.current.srcObject = stream;
-
-        await videoRef.current.play();
-
-      }
-
-      scanningRef.current = true;
-
-      setScanning(true);
-
-      const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-
-      const tick = async () => {
-
-        if (!scanningRef.current || !videoRef.current) return;
-
-        try {
-
-          const codes = await detector.detect(videoRef.current);
-
-          if (codes.length > 0) {
-
-            const parsed = parseQrPayload(codes[0].rawValue);
-
-            if (parsed?.unique_id) {
-
-              stopScanner();
-
-              await checkIn(parsed);
-
-              return;
-
-            }
-
-          }
-
-        } catch {
-
-          /* ignore frame errors */
-
-        }
-
-        rafRef.current = requestAnimationFrame(tick);
-
-      };
-
-      rafRef.current = requestAnimationFrame(tick);
-
+      controlsRef.current?.stop();
     } catch {
+      // ignore
+    }
+    controlsRef.current = null;
+    readerRef.current = null;
 
-      setStatus("Could not access camera.");
-
+    try {
+      BrowserCodeReader.releaseAllStreams();
+    } catch {
+      // ignore
     }
 
-  };
-
-  useEffect(() => {
-
-    return () => stopScanner();
-
+    const v = videoRef.current;
+    if (v) {
+      try {
+        BrowserCodeReader.cleanVideoSource(v);
+      } catch {
+        v.srcObject = null;
+      }
+    }
   }, []);
 
+  const pickBackCameraId = (devices) => {
+    if (!devices?.length) return undefined;
+    for (const d of devices) {
+      const label = (d.label || "").toLowerCase();
+      if (
+        label.includes("back") ||
+        label.includes("rear") ||
+        label.includes("environment") ||
+        label.includes("facing back")
+      ) {
+        return d.deviceId;
+      }
+    }
+    return devices[0].deviceId;
+  };
+
+  const startScanner = useCallback(async () => {
+    const host = window.location.hostname;
+    const secure =
+      window.isSecureContext || host === "localhost" || host === "127.0.0.1";
+    if (!secure) {
+      setStatus(
+        "Camera needs a secure page (https://) or localhost. On iPhone, http://YOUR-LAN-IP blocks the camera—use HTTPS or manual check-in."
+      );
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus(
+        "Camera API unavailable (often fixed by opening the site over HTTPS). Use manual code or search below."
+      );
+      return;
+    }
+
+    stopScanner();
+    decodeHandledRef.current = false;
+    scanningRef.current = true;
+    setScanning(true);
+    setStatus("Starting camera…");
+
+    const video = videoRef.current;
+    if (!video) {
+      setStatus("Scanner not ready. Refresh the page and try again.");
+      stopScanner();
+      return;
+    }
+
+    const reader = new BrowserQRCodeReader(undefined, {
+      delayBetweenScanAttempts: 120,
+      tryPlayVideoTimeout: 10000,
+    });
+    readerRef.current = reader;
+
+    const onDecode = (result, _err, controls) => {
+      if (!result || decodeHandledRef.current || !scanningRef.current) return;
+      const text = result.getText();
+      const parsed = parseQrPayload(text);
+      if (!parsed?.unique_id) return;
+
+      decodeHandledRef.current = true;
+      scanningRef.current = false;
+      try {
+        controls.stop();
+      } catch {
+        // ignore
+      }
+      controlsRef.current = null;
+      setScanning(false);
+      try {
+        BrowserCodeReader.releaseAllStreams();
+      } catch {
+        // ignore
+      }
+      if (videoRef.current) {
+        try {
+          BrowserCodeReader.cleanVideoSource(videoRef.current);
+        } catch {
+          videoRef.current.srcObject = null;
+        }
+      }
+
+      void checkIn(parsed);
+    };
+
+    const setScannerError = (err) => {
+      const name = err?.name || "";
+      const msg = String(err?.message || err || "");
+      if (name === "NotAllowedError" || msg.includes("Permission")) {
+        setStatus("Camera permission denied. Allow camera for this site in the browser settings.");
+      } else if (
+        name === "NotFoundError" ||
+        name === "OverconstrainedError" ||
+        msg.includes("Devices could not be found")
+      ) {
+        setStatus("No matching camera found. Try another device or use manual check-in.");
+      } else if (name === "NotReadableError" || msg.includes("Could not start video source")) {
+        setStatus("Camera is busy or blocked. Close other apps using the camera and try again.");
+      } else {
+        setStatus(`Scanner error: ${msg || "unknown"}`);
+      }
+    };
+
+    try {
+      // Prefer generic video first: decodeFromVideoDevice(undefined) uses facingMode
+      // 'environment', which often fails on laptops (no back camera) and yields no preview.
+      const controls = await reader.decodeFromConstraints({ video: true }, video, onDecode);
+      controlsRef.current = controls;
+      setStatus("Point the camera at the attendee QR code…");
+    } catch (e1) {
+      try {
+        const devices = await BrowserCodeReader.listVideoInputDevices();
+        const deviceId = pickBackCameraId(devices);
+        if (!deviceId) throw e1;
+        const controls = await reader.decodeFromVideoDevice(deviceId, video, onDecode);
+        controlsRef.current = controls;
+        setStatus("Point the camera at the attendee QR code…");
+      } catch (e2) {
+        try {
+          const controls = await reader.decodeFromConstraints(
+            { video: { facingMode: { ideal: "environment" } } },
+            video,
+            onDecode
+          );
+          controlsRef.current = controls;
+          setStatus("Point the camera at the attendee QR code…");
+        } catch (e3) {
+          stopScanner();
+          setScannerError(e3);
+        }
+      }
+    }
+  }, [checkIn, stopScanner]);
+
+  useEffect(
+    () => () => {
+      stopScanner();
+    },
+    [stopScanner]
+  );
+
   const submitCode = () => {
-
     const parsed = parseQrPayload(code);
-
     if (parsed?.unique_id) checkIn(parsed);
-
     else setStatus("Enter a valid check-in code.");
-
   };
 
   return (
-
     <DashboardLayout>
-
-      <div className="max-w-3xl">
-
+      <div className="max-w-3xl w-full mx-auto px-0 sm:px-0">
         <Link
-
           to={`/dashboard/event/${eventId}`}
-
-          className="inline-flex items-center gap-2 text-sm text-slate-600 mb-6"
-
+          className="inline-flex items-center gap-2 text-sm text-slate-600 mb-4 sm:mb-6"
         >
-
           <ArrowLeft size={16} />
-
           Event hub
-
         </Link>
 
-        <h1 className="text-2xl font-bold text-slate-900">Check-in scan</h1>
-
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Check-in scan</h1>
         <p className="text-slate-600 mt-2 text-sm">
-
-          Scan a QR from this event, paste the raw payload, or search and check in. The
-
-          attendee table updates the checked-in column.
-
+          QR scanning uses ZXing (Chrome-friendly). You can also paste a code or search.
         </p>
 
-        <div className="mt-6 grid md:grid-cols-2 gap-6">
+        <div className="mt-4 bg-white border border-slate-200 rounded-xl p-4">
+          <p className="text-sm font-medium text-slate-900">Auto check-in confirmation mail</p>
+          <p className="text-xs text-slate-500 mt-1">
+            On each check-in, a confirmation email is sent with name plus selected fields.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {availableMailFields.map((f) => {
+              const active = mailFields.includes(f.key);
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() =>
+                    setMailFields((prev) =>
+                      prev.includes(f.key) ? prev.filter((x) => x !== f.key) : [...prev, f.key]
+                    )
+                  }
+                  className={`text-xs px-2.5 py-1 rounded-full border ${
+                    active
+                      ? "bg-blue-600 border-blue-600 text-white"
+                      : "bg-white border-slate-300 text-slate-700"
+                  }`}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
             <h2 className="font-semibold text-slate-900">QR scanner</h2>
-
-            <p className="text-xs text-slate-500 mt-1">
-
-              Uses the browser barcode API (Chrome / Edge). Grant camera permission when
-
-              prompted.
-
-            </p>
-
-            <div className="mt-4 rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center">
-
-              <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
-
+            {/* <p className="text-xs text-slate-500 mt-1">
+              Allow camera when Chrome prompts. Use HTTPS if you open the app
+              from a phone on your LAN.
+            </p> */}
+            <div className="mt-4 rounded-xl overflow-hidden bg-black aspect-video min-h-[150px]">
+              <video
+                ref={videoRef}
+                className="w-full h-full object-cover"
+                muted
+                playsInline
+                autoPlay
+              />
             </div>
-
-            <div className="flex gap-2 mt-4">
-
+            <div className="flex flex-col sm:flex-row gap-2 mt-4">
               {!scanning ? (
-
                 <button
-
                   type="button"
-
                   onClick={startScanner}
-
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium"
-
+                  className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded-lg text-sm font-medium w-full sm:w-auto"
                 >
-
                   Start camera
-
                 </button>
-
               ) : (
-
                 <button
-
                   type="button"
-
                   onClick={stopScanner}
-
-                  className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium"
-
+                  className="bg-slate-800 text-white px-4 py-3 sm:py-2 rounded-lg text-sm font-medium w-full sm:w-auto"
                 >
-
                   Stop
-
                 </button>
-
               )}
-
             </div>
-
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
             <h2 className="font-semibold text-slate-900">Manual code</h2>
-
             <input
-
               value={code}
-
               onChange={(e) => setCode(e.target.value)}
-
               placeholder="Paste QR payload or unique ID"
-
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
-
+              className="w-full border border-slate-200 rounded-lg px-3 py-3 sm:py-2 text-sm"
             />
-
             <button
-
               type="button"
-
               onClick={submitCode}
-
-              className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium"
-
+              className="w-full sm:w-auto bg-slate-900 text-white px-4 py-3 sm:py-2 rounded-lg text-sm font-medium"
             >
-
               Check in with code
-
             </button>
 
             <div className="border-t border-slate-100 pt-4">
-
               <h2 className="font-semibold text-slate-900 flex items-center gap-2">
-
                 <Search size={18} />
-
                 Search
-
               </h2>
-
               <input
-
                 value={query}
-
                 onChange={(e) => setQuery(e.target.value)}
-
                 placeholder="Name, email, roll, or code"
-
-                className="mt-2 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
-
+                className="mt-2 w-full border border-slate-200 rounded-lg px-3 py-3 sm:py-2 text-sm"
               />
-
               <ul className="mt-3 space-y-2 max-h-56 overflow-y-auto">
-
                 {results.map((a) => (
-
                   <li
-
                     key={a.id}
-
-                    className="flex justify-between items-center gap-2 text-sm border border-slate-100 rounded-lg p-2"
-
+                    className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 text-sm border border-slate-100 rounded-lg p-3"
                   >
-
                     <div>
-
                       <div className="font-medium text-slate-900">{a.name || "—"}</div>
-
                       <div className="text-slate-500 text-xs">{a.email}</div>
-
+                      <div className="text-xs mt-1">
+                        {a.checked_in ? (
+                          <span className="text-emerald-700">Checked in</span>
+                        ) : (
+                          <span className="text-slate-500">Not checked in</span>
+                        )}
+                      </div>
                     </div>
-
-                    <button
-
-                      type="button"
-
-                      onClick={() => checkIn({ attendee_id: a.id })}
-
-                      className="shrink-0 inline-flex items-center gap-1 bg-emerald-600 text-white px-2 py-1 rounded text-xs font-medium"
-
-                    >
-
-                      <CheckCircle size={14} />
-
-                      In
-
-                    </button>
-
+                    <div className="flex gap-1 shrink-0">
+                      {a.checked_in ? (
+                        <button
+                          type="button"
+                          onClick={() => uncheckIn({ attendee_id: a.id })}
+                          className="inline-flex items-center justify-center gap-1 bg-rose-600 text-white px-3 py-2 sm:px-2 sm:py-1 rounded text-xs font-medium flex-1 sm:flex-initial"
+                        >
+                          <XCircle size={14} />
+                          Uncheck
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => checkIn({ attendee_id: a.id })}
+                          className="inline-flex items-center justify-center gap-1 bg-emerald-600 text-white px-3 py-2 sm:px-2 sm:py-1 rounded text-xs font-medium flex-1 sm:flex-initial"
+                        >
+                          <CheckCircle size={14} />
+                          Check in
+                        </button>
+                      )}
+                    </div>
                   </li>
-
                 ))}
-
               </ul>
 
+              <div className="mt-4 border-t border-slate-100 pt-4">
+                <h2 className="font-semibold text-slate-900 text-sm">Last check-in logs</h2>
+
+                {logs.length === 0 ? (
+                  <p className="text-sm text-slate-600 mt-2">No logs yet.</p>
+                ) : (
+                  <ul className="mt-2 space-y-1">
+                    {logs.map((l, i) => (
+                      <li
+                        key={l.attendee_id ? `${l.attendee_id}-${i}` : i}
+                        className="text-sm text-slate-600"
+                      >
+                        <span className="font-medium text-slate-900">{l.name || "—"}</span>
+                        :{" "}
+                        {l.checked_in ? (
+                          <span className="text-emerald-700">Checked in</span>
+                        ) : (
+                          <span className="text-slate-500">Unchecked</span>
+                        )}
+                        {l.checkin_time ? (
+                          <span className="text-slate-500">
+                            {" "}
+                            ({new Date(l.checkin_time).toLocaleString()})
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
-
           </div>
-
         </div>
 
         {status && (
-
-          <p className="mt-4 text-sm px-4 py-3 rounded-lg bg-slate-100 text-slate-800">
-
+          <p className="mt-4 text-sm px-4 py-3 rounded-lg bg-slate-100 text-slate-800 break-words">
             {status}
-
           </p>
-
         )}
-
       </div>
-
     </DashboardLayout>
-
   );
-
 }
 
 export default EventCheckinPage;

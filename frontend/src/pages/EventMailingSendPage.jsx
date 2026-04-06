@@ -5,6 +5,71 @@ import DashboardLayout from "../layouts/DashboardLayout";
 import API from "../services/api";
 import { ArrowLeft } from "lucide-react";
 
+const RESPONSIVE_TEMPLATE = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      body{margin:0;padding:0;background:#0b1220;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+      .wrap{max-width:640px;margin:0 auto;padding:24px}
+      .card{background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb}
+      .head{padding:18px 18px 0}
+      .title{margin:0;font-size:20px;line-height:1.25;color:#0f172a}
+      .muted{margin:8px 0 0;color:#475569;font-size:14px;line-height:1.5}
+      .section{padding:18px}
+      .row{display:flex;gap:16px;flex-wrap:wrap}
+      .col{flex:1;min-width:240px}
+      .pill{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700}
+      .code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;display:inline-block}
+      .img{width:100%;height:auto;display:block;border-radius:14px;border:1px solid #e5e7eb}
+      .qr{max-width:280px;margin:0 auto}
+      .foot{padding:14px 18px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.4}
+      @media (max-width:520px){
+        .wrap{padding:14px}
+        .title{font-size:18px}
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div class="head">
+          <span class="pill">Event Pass</span>
+          <h1 class="title">Hi {{name}}, your pass is ready</h1>
+          <p class="muted">Show the QR below at the entry. Keep this email handy on mobile.</p>
+        </div>
+
+        <div class="section">
+          <div class="row">
+            <div class="col">
+              <p class="muted" style="margin:0 0 8px">Check-in code</p>
+              <div class="code">{{unique_id}}</div>
+              <p class="muted" style="margin:10px 0 0">Email: {{email}}</p>
+              <p class="muted" style="margin:6px 0 0">Roll / ID: {{roll_number}}</p>
+            </div>
+            <div class="col">
+              <p class="muted" style="margin:0 0 8px">Scan QR</p>
+              <div class="qr">
+                <img class="img" src="{{qr_url}}" alt="QR code" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section" style="padding-top:0">
+          <p class="muted" style="margin:0 0 10px">Your pass</p>
+          <img class="img" src="{{pass_url}}" alt="Pass" />
+        </div>
+
+        <div class="foot">
+          If images don’t load, open the pass link directly: {{pass_url}}
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`;
+
 function EventMailingSendPage() {
 
   const { eventId } = useParams();
@@ -19,11 +84,11 @@ function EventMailingSendPage() {
 
   );
 
-  const [attachPass, setAttachPass] = useState(true);
-
   const [busy, setBusy] = useState(false);
 
   const [result, setResult] = useState(null);
+  const [progress, setProgress] = useState({ total: 0, done: 0, remaining: 0, sent: 0, failed: 0, skipped: 0, delivery: "" });
+  const [liveLog, setLiveLog] = useState([]);
 
   const [campaigns, setCampaigns] = useState([]);
 
@@ -48,22 +113,81 @@ function EventMailingSendPage() {
     setBusy(true);
 
     setResult(null);
+    setLiveLog([]);
+    setProgress({ total: 0, done: 0, remaining: 0, sent: 0, failed: 0, skipped: 0, delivery: "" });
 
     try {
-
-      const res = await API.post(`/events/${eventId}/mailing/send`, {
-
-        campaign_type: tab,
-
-        subject,
-
-        html_body: html,
-
-        attach_pass_link: tab === "pass_mail" ? attachPass : false
-
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API.defaults.baseURL}/events/${eventId}/mailing/send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          campaign_type: tab,
+          subject,
+          html_body: html,
+          attach_pass_link: false,
+        }),
       });
 
-      setResult(res.data);
+      if (!res.ok || !res.body) throw new Error("send_failed");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          for (const line of part.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const jsonStr = line.slice(5).trim();
+            if (!jsonStr) continue;
+            const data = JSON.parse(jsonStr);
+
+            if (data.type === "start") {
+              setProgress((p) => ({
+                ...p,
+                total: data.total || 0,
+                done: 0,
+                remaining: data.remaining || 0,
+                delivery: data.delivery || "",
+              }));
+            } else if (data.type === "log") {
+              if (data.log) setLiveLog((prev) => [...prev, data.log]);
+              if (typeof data.skipped === "number") setProgress((p) => ({ ...p, skipped: data.skipped }));
+            } else if (data.type === "progress") {
+              setProgress((p) => ({
+                ...p,
+                total: data.total ?? p.total,
+                done: data.done ?? p.done,
+                remaining: data.remaining ?? p.remaining,
+                sent: data.sent ?? p.sent,
+                failed: data.failed ?? p.failed,
+                skipped: data.skipped ?? p.skipped,
+              }));
+              if (data.log) setLiveLog((prev) => [...prev, data.log]);
+            } else if (data.type === "batch") {
+              if (data.remaining != null && data.total != null) {
+                setLiveLog((prev) => [
+                  ...prev,
+                  `batch:${data.batch_size} done:${data.done}/${data.total} remaining:${data.remaining}`,
+                ]);
+              }
+            } else if (data.type === "done") {
+              setResult(data);
+            }
+          }
+        }
+      }
 
       loadCampaigns();
 
@@ -102,11 +226,15 @@ function EventMailingSendPage() {
         <h1 className="text-2xl font-bold text-slate-900">Send mail</h1>
 
         <p className="text-slate-600 mt-2 text-sm">
-
-          Uses the same merge tokens as passes. With Resend configured on the server,
-
-          messages are delivered; otherwise sends are simulated and still logged.
-
+          Upload or paste a full responsive HTML template. Use tokens like{" "}
+          <code className="bg-slate-100 px-1 rounded text-xs">
+            {"{{name}} {{email}} {{roll_number}} {{unique_id}} {{qr_url}} {{pass_url}}"}
+          </code>{" "}
+          to embed the QR and pass images directly in the HTML body (example:{" "}
+          <code className="bg-slate-100 px-1 rounded text-xs">
+            {'<img src="{{qr_url}}" /> <img src="{{pass_url}}" />'}
+          </code>
+          ). Once an attendee is mailed successfully, they are skipped on future runs.
         </p>
 
         <div className="flex gap-2 mt-6">
@@ -179,6 +307,32 @@ function EventMailingSendPage() {
 
             HTML body
 
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setHtml(RESPONSIVE_TEMPLATE)}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-700"
+              >
+                Use responsive template
+              </button>
+
+              <label className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-700 cursor-pointer">
+                Load HTML file
+                <input
+                  type="file"
+                  accept=".html,.htm,text/html"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const r = new FileReader();
+                    r.onload = () => setHtml(String(r.result || ""));
+                    r.readAsText(f);
+                  }}
+                />
+              </label>
+            </div>
+
             <textarea
 
               className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 font-mono text-sm min-h-[160px]"
@@ -190,26 +344,6 @@ function EventMailingSendPage() {
             />
 
           </label>
-
-          {tab === "pass_mail" && (
-
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-
-              <input
-
-                type="checkbox"
-
-                checked={attachPass}
-
-                onChange={(e) => setAttachPass(e.target.checked)}
-
-              />
-
-              Append pass download link and QR image when available
-
-            </label>
-
-          )}
 
           <button
 
@@ -227,6 +361,22 @@ function EventMailingSendPage() {
 
           </button>
 
+          {busy && progress.total > 0 && (
+            <p className="text-sm text-slate-700">
+              Remaining: <strong>{progress.remaining}</strong> / {progress.total} — sent{" "}
+              <strong>{progress.sent}</strong>, failed <strong>{progress.failed}</strong>, skipped{" "}
+              <strong>{progress.skipped}</strong>
+            </p>
+          )}
+
+          {liveLog.length > 0 && (
+            <div className="bg-slate-900 text-slate-100 rounded-xl p-3 text-xs font-mono max-h-40 overflow-y-auto">
+              {liveLog.map((line, i) => (
+                <div key={i}>{line}</div>
+              ))}
+            </div>
+          )}
+
           {result && !result.error && (
 
             <div className="text-sm text-slate-700 space-y-2">
@@ -234,19 +384,14 @@ function EventMailingSendPage() {
               <p>
 
                 Delivery mode: <strong>{result.delivery}</strong> — sent{" "}
-
                 <strong>{result.sent}</strong> / {result.total}
 
               </p>
 
               <div className="bg-slate-900 text-slate-100 rounded-xl p-3 text-xs font-mono max-h-40 overflow-y-auto">
-
-                {(result.log || []).map((line, i) => (
-
+                {liveLog.map((line, i) => (
                   <div key={i}>{line}</div>
-
                 ))}
-
               </div>
 
             </div>

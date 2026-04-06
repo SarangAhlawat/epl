@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "@zxing/browser": "^0.1.5",
+    "@zxing/library": "^0.21.3",
     "axios": "^1.14.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",

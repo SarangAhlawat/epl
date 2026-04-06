@@ -6,14 +6,14 @@ const SYSTEM_FIELDS = [
   "name",
   "email",
   "roll_number",
-  "phone",
 ];
 
 export default function ColumnMapper({
   columns,
+  suggestedMapping = {},
   onSubmit,
 }) {
-  const [mapping, setMapping] = useState({});
+  const [mapping, setMapping] = useState(suggestedMapping || {});
 
   const handleChange = (column, value) => {
     setMapping({
@@ -47,6 +47,7 @@ export default function ColumnMapper({
 
             <select
               className="border p-2 rounded w-1/2"
+              value={mapping[column] || ""}
               onChange={(e) =>
                 handleChange(
                   column,
@@ -56,7 +57,10 @@ export default function ColumnMapper({
             >
 
               <option value="">
-                Select Field
+                Keep as custom column
+              </option>
+              <option value="__drop__">
+                Remove this column
               </option>
 
               {SYSTEM_FIELDS.map((field) => (

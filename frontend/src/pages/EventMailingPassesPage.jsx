@@ -11,6 +11,7 @@ const DEFAULT_HTML = `<div style="font-family:system-ui;padding:24px;max-width:4
   <p><strong>Email:</strong> {{email}}</p>
   <p><strong>Roll / ID:</strong> {{roll_number}}</p>
   <p><strong>Check-in code:</strong> {{unique_id}}</p>
+  <p><strong>QR:</strong> {{qr_url}}</p>
 </div>`;
 
 function EventMailingPassesPage() {
@@ -22,6 +23,7 @@ function EventMailingPassesPage() {
   const [file, setFile] = useState(null);
 
   const [log, setLog] = useState([]);
+  const [progress, setProgress] = useState({ total: 0, done: 0, remaining: 0 });
 
   const [busy, setBusy] = useState(false);
 
@@ -34,6 +36,7 @@ function EventMailingPassesPage() {
     setMsg("");
 
     setLog([]);
+    setProgress({ total: 0, done: 0, remaining: 0 });
 
     try {
 
@@ -43,19 +46,65 @@ function EventMailingPassesPage() {
 
       if (file) fd.append("pass_template", file);
 
-      const res = await API.post(
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API.defaults.baseURL}/events/${eventId}/mailing/generate-passes`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
 
-        `/events/${eventId}/mailing/generate-passes`,
+      if (!res.ok || !res.body) throw new Error("passes_generation_failed");
 
-        fd,
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-        { headers: { "Content-Type": "multipart/form-data" } }
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
 
-      );
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
 
-      setLog(res.data.log || []);
+        for (const part of parts) {
+          for (const line of part.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const jsonStr = line.slice(5).trim();
+            if (!jsonStr) continue;
 
-      setMsg(`Generated ${res.data.generated} passes.`);
+            const data = JSON.parse(jsonStr);
+            if (data.type === "start") {
+              setProgress({
+                total: data.total || 0,
+                done: 0,
+                remaining: data.remaining || 0,
+              });
+            } else if (data.type === "progress") {
+              setProgress({
+                total: data.total || 0,
+                done: data.done || 0,
+                remaining: data.remaining || 0,
+              });
+              if (data.log) setLog((prev) => [...prev, data.log]);
+            } else if (data.type === "done") {
+              setMsg(`Generated ${data.generated} passes.`);
+            }
+          }
+        }
+      }
+
+        // `/events/${eventId}/mailing/generate-passes`,
+
+        // fd,
+
+        // { headers: { "Content-Type": "multipart/form-data" } }
+
+      // );
+
+      // setLog(res.data.log || []);
+
+      // setMsg(`Generated ${res.data.generated} passes.`);
 
     } catch {
 
@@ -99,11 +148,11 @@ function EventMailingPassesPage() {
 
           <code className="bg-slate-100 px-1 rounded text-xs">
 
-            {"{{name}} {{email}} {{roll_number}} {{unique_id}} {{pass_template_url}}"}
+            {"{{name}} {{email}} {{roll_number}} {{unique_id}} {{qr_url}} {{pass_template_url}}"}
 
           </code>
 
-          .
+          . Generated passes are stored as viewable image assets (SVG) per attendee.
 
         </p>
 
@@ -156,6 +205,13 @@ function EventMailingPassesPage() {
             {busy ? "Working…" : "Generate & store passes"}
 
           </button>
+
+          {busy && progress.total > 0 && (
+            <p className="text-sm text-slate-700">
+              Remaining:{" "}
+              <span className="font-semibold">{progress.remaining}</span> / {progress.total}
+            </p>
+          )}
 
           {msg && <p className="text-sm text-slate-700">{msg}</p>}
 

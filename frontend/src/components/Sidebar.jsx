@@ -10,17 +10,17 @@ const navItemClass = ({ isActive }) =>
 
   }`;
 
-function Sidebar() {
+function Sidebar({ className = "", onNavigate }) {
 
   return (
 
-    <aside className="w-64 shrink-0 bg-blue-900 text-white min-h-screen p-6">
+    <aside className={`w-64 shrink-0 bg-blue-900 text-white min-h-screen p-6 ${className}`}>
 
       <h2 className="text-xl font-bold mb-10">GetEvents</h2>
 
       <nav className="flex flex-col gap-2">
 
-        <NavLink to="/dashboard" className={navItemClass} end>
+        <NavLink to="/dashboard" className={navItemClass} end onClick={onNavigate}>
 
           <LayoutDashboard size={18} />
 
@@ -28,7 +28,7 @@ function Sidebar() {
 
         </NavLink>
 
-        <NavLink to="/dashboard/events" className={navItemClass}>
+        <NavLink to="/dashboard/events" className={navItemClass} onClick={onNavigate}>
 
           <Calendar size={18} />
 
@@ -36,7 +36,7 @@ function Sidebar() {
 
         </NavLink>
 
-        <NavLink to="/dashboard/users" className={navItemClass}>
+        <NavLink to="/dashboard/users" className={navItemClass} onClick={onNavigate}>
 
           <Users size={18} />
 
@@ -44,7 +44,7 @@ function Sidebar() {
 
         </NavLink>
 
-        <NavLink to="/dashboard/events" className={navItemClass} title="Pick an event, then use Upload Excel on the event page">
+        <NavLink to="/dashboard/events" className={navItemClass} title="Pick an event, then use Upload Excel on the event page" onClick={onNavigate}>
 
           <Upload size={18} />
 

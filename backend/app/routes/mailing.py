@@ -1,6 +1,9 @@
 import datetime
 import io
 import uuid
+import re
+import json
+from html import escape
 import qrcode
 from fastapi import APIRouter
 from fastapi import Depends
@@ -8,6 +11,7 @@ from fastapi import File
 from fastapi import Form
 from fastapi import HTTPException
 from fastapi import UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -49,6 +53,119 @@ def _merge_placeholders(template: str, attendee: Attendee) -> str:
         out = out.replace(k, v)
 
     return out
+
+
+def _build_pass_svg(merged_html: str, background_url: str | None = None) -> str:
+
+    text_only = re.sub(r"<[^>]+>", "", merged_html or "")
+    lines = [x.strip() for x in text_only.splitlines() if x.strip()]
+    if len(lines) == 0:
+        lines = ["Event Pass"]
+
+    y = 80
+    text_nodes = []
+    for line in lines[:14]:
+        text_nodes.append(
+            f"<text x='40' y='{y}' fill='#0f172a' font-family='Arial' font-size='18'>{escape(line)}</text>"
+        )
+        y += 32
+
+    bg = ""
+    if background_url:
+        bg = (
+            "<image href='{url}' x='0' y='0' width='1200' height='675' preserveAspectRatio='xMidYMid slice' />"
+            .format(url=escape(background_url))
+        )
+
+    return (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='675' viewBox='0 0 1200 675'>"
+        "<rect width='1200' height='675' fill='#f8fafc'/>"
+        f"{bg}"
+        "<rect x='20' y='20' width='1160' height='635' rx='24' ry='24' fill='white' fill-opacity='0.87' stroke='#cbd5e1'/>"
+        + "".join(text_nodes)
+        + "</svg>"
+    )
+
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
+
+
+def _token_has(template: str, token: str) -> bool:
+    return token in (template or "")
+
+
+def _build_aligned_pass_svg(
+    template_html: str,
+    attendee: Attendee,
+    background_url: str | None = None,
+) -> str:
+    # "Perfect alignment": fixed coordinates for name, ID, and QR.
+    template_html = template_html or ""
+
+    name_val = escape(attendee.name or "")
+    id_val = escape(attendee.unique_id or attendee.roll_number or "")
+    email_val = escape(attendee.email or "")
+
+    qr_val = attendee.qr_url or ""
+
+    show_name = _token_has(template_html, "{{name}}") or _token_has(template_html, "{{full_name}}")
+    show_id = (
+        _token_has(template_html, "{{unique_id}}")
+        or _token_has(template_html, "{{roll_number}}")
+        or _token_has(template_html, "{{id}}")
+    )
+    show_email = _token_has(template_html, "{{email}}")
+    show_qr = _token_has(template_html, "{{qr_url}}") or _token_has(template_html, "{{qr}}")
+
+    bg = ""
+    if background_url:
+        bg = (
+            "<image href='{url}' x='0' y='0' width='1200' height='675' preserveAspectRatio='xMidYMid slice' />"
+            .format(url=escape(background_url))
+        )
+
+    name_node = ""
+    if show_name:
+        name_node = (
+            "<text x='90' y='240' fill='#0f172a' font-family='Arial' font-size='34' font-weight='700'>"
+            f"{name_val}</text>"
+        )
+
+    id_node = ""
+    if show_id:
+        id_node = (
+            "<text x='90' y='315' fill='#0f172a' font-family='Arial' font-size='26' font-weight='600'>"
+            f"ID: {id_val}</text>"
+        )
+
+    email_node = ""
+    if show_email and email_val:
+        email_node = (
+            "<text x='90' y='385' fill='#334155' font-family='Arial' font-size='20' font-weight='500'>"
+            f"{email_val}</text>"
+        )
+
+    qr_node = ""
+    if show_qr:
+        if qr_val:
+            qr_node = (
+                f"<image href='{escape(qr_val)}' x='860' y='210' width='250' height='250' preserveAspectRatio='xMidYMid meet' />"
+            )
+        else:
+            qr_node = (
+                "<rect x='860' y='210' width='250' height='250' rx='16' ry='16' fill='#e2e8f0' stroke='#94a3b8' />"
+                "<text x='935' y='350' fill='#475569' font-family='Arial' font-size='18' font-weight='600'>QR</text>"
+            )
+
+    return (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='675' viewBox='0 0 1200 675'>"
+        "<rect width='1200' height='675' fill='#f8fafc'/>"
+        f"{bg}"
+        "<rect x='20' y='20' width='1160' height='635' rx='24' ry='24' fill='white' fill-opacity='0.87' stroke='#cbd5e1'/>"
+        f"{name_node}{id_node}{email_node}{qr_node}"
+        "</svg>"
+    )
 
 
 @router.post("/{event_id}/mailing/upload-pass-template")
@@ -114,55 +231,74 @@ def generate_passes(
 
         db.commit()
 
-    attendees = db.query(Attendee).filter(Attendee.event_id == event_id).all()
+    def generate_stream():
 
-    log = []
+        attendees = db.query(Attendee).filter(Attendee.event_id == event_id).all()
 
-    for a in attendees:
+        # Do not regenerate for those already generated.
+        needed = []
+        for a in attendees:
+            if not a.unique_id:
+                a.unique_id = uuid.uuid4().hex[:16]
+            # Do not regenerate passes that already exist.
+            if not a.pass_url:
+                needed.append(a)
 
-        if not a.unique_id:
+        total = len(needed)
+        done = 0
 
-            a.unique_id = uuid.uuid4().hex[:16]
+        yield _sse({"type": "start", "total": total, "done": 0, "remaining": total})
 
-        body = _merge_placeholders(merge_html, a)
+        for a in needed:
+            # Ensure QR exists for the aligned QR box.
+            if not a.qr_url:
+                payload = f"{event_id}|{a.unique_id}"
+                img = qrcode.make(payload)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                buf.seek(0)
+                qr_url = upload_bytes_to_s3(
+                    buf.getvalue(),
+                    f"events/{event_id}/qr",
+                    "png",
+                    "image/png",
+                )
+                a.qr_url = qr_url
+                db.commit()
 
-        if template_bg and "{{pass_template_url}}" in body:
+            svg = _build_aligned_pass_svg(merge_html, a, template_bg or None)
+            data = svg.encode("utf-8")
 
-            body = body.replace("{{pass_template_url}}", template_bg)
-
-        elif template_bg and "background" not in body.lower():
-
-            body = (
-
-                f"<div style=\"min-height:400px;background:url('{template_bg}') "
-
-                "center/cover no-repeat;padding:24px;\">"
-
-                f"{body}</div>"
-
+            pass_url = upload_bytes_to_s3(
+                data,
+                f"events/{event_id}/generated_passes",
+                "svg",
+                "image/svg+xml",
             )
 
-        data = body.encode("utf-8")
+            a.pass_url = pass_url
+            db.commit()
 
-        url = upload_bytes_to_s3(
+            done += 1
+            remaining = total - done
 
-            data,
+            yield _sse({
+                "type": "progress",
+                "email": a.email,
+                "attendee_id": str(a.id),
+                "done": done,
+                "total": total,
+                "remaining": remaining,
+                "log": f"Pass generated for {a.email or a.id}",
+            })
 
-            f"events/{event_id}/generated_passes",
+        yield _sse({"type": "done", "generated": done, "total": total})
 
-            "html",
-
-            "text/html; charset=utf-8"
-
-        )
-
-        a.pass_url = url
-
-        log.append(f"Pass generated for {a.email or a.id}")
-
-    db.commit()
-
-    return {"status": "ok", "generated": len(attendees), "log": log}
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @router.post("/{event_id}/mailing/generate-qr")
@@ -181,45 +317,57 @@ def generate_qr_codes(
 
         raise HTTPException(404, "event_not_found")
 
-    attendees = db.query(Attendee).filter(Attendee.event_id == event_id).all()
+    def generate_stream():
 
-    log = []
+        attendees = db.query(Attendee).filter(Attendee.event_id == event_id).all()
 
-    for a in attendees:
+        needed = []
+        for a in attendees:
+            if not a.unique_id:
+                a.unique_id = uuid.uuid4().hex[:16]
+            # Do not regenerate QR for those already generated.
+            if not a.qr_url:
+                needed.append(a)
 
-        if not a.unique_id:
+        total = len(needed)
+        done = 0
 
-            a.unique_id = uuid.uuid4().hex[:16]
+        yield _sse({"type": "start", "total": total, "done": 0, "remaining": total})
 
-        payload = f"{event_id}|{a.unique_id}"
+        for a in needed:
+            payload = f"{event_id}|{a.unique_id}"
+            img = qrcode.make(payload)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            url = upload_bytes_to_s3(
+                buf.getvalue(),
+                f"events/{event_id}/qr",
+                "png",
+                "image/png",
+            )
+            a.qr_url = url
+            db.commit()
 
-        img = qrcode.make(payload)
+            done += 1
+            remaining = total - done
+            yield _sse({
+                "type": "progress",
+                "email": a.email,
+                "attendee_id": str(a.id),
+                "done": done,
+                "total": total,
+                "remaining": remaining,
+                "log": f"QR generated for {a.email or a.name or a.id}",
+            })
 
-        buf = io.BytesIO()
+        yield _sse({"type": "done", "generated": done, "total": total})
 
-        img.save(buf, format="PNG")
-
-        buf.seek(0)
-
-        url = upload_bytes_to_s3(
-
-            buf.getvalue(),
-
-            f"events/{event_id}/qr",
-
-            "png",
-
-            "image/png"
-
-        )
-
-        a.qr_url = url
-
-        log.append(f"QR for {a.email or a.name or a.id}")
-
-    db.commit()
-
-    return {"status": "ok", "generated": len(attendees), "log": log}
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 class SendMailBody(BaseModel):
@@ -255,137 +403,166 @@ def send_mails(
 
         raise HTTPException(404, "event_not_found")
 
-    attendees = db.query(Attendee).filter(Attendee.event_id == event_id).all()
+    BATCH_SIZE = 70
 
-    log_lines = []
+    def send_stream():
+        attendees = db.query(Attendee).filter(Attendee.event_id == event_id).all()
 
-    sent = 0
+        api_key = None
+        if resend is not None:
+            from app.config import settings
+            api_key = settings.RESEND_API_KEY
 
-    api_key = None
+        delivery = "resend" if api_key else "simulated"
 
-    if resend is not None:
+        # Only count those that will actually be attempted (remaining recipients)
+        eligible = []
+        for a in attendees:
+            if not a.email:
+                continue
+            if body.campaign_type == "pass_mail" and (a.pass_mail_status or "") == "sent":
+                continue
+            if body.campaign_type == "other" and (a.other_mail_status or "") == "sent":
+                continue
+            eligible.append(a)
 
-        from app.config import settings
+        total = len(eligible)
+        done = 0
+        sent = 0
+        failed = 0
+        skipped = 0
+        log_lines: list[str] = []
 
-        api_key = settings.RESEND_API_KEY
+        yield _sse({"type": "start", "total": total, "done": 0, "remaining": total, "delivery": delivery})
 
-    for a in attendees:
+        for i, a in enumerate(attendees):
+            # skip: no email
+            if not a.email:
+                skipped += 1
+                line = f"skip_no_email:{a.id}"
+                log_lines.append(line)
+                if body.campaign_type == "pass_mail":
+                    a.pass_mail_status = "skipped_no_email"
+                else:
+                    a.other_mail_status = "skipped_no_email"
+                db.commit()
+                yield _sse({"type": "log", "log": line, "skipped": skipped})
+                continue
 
-        if not a.email:
+            # skip: already sent
+            if body.campaign_type == "pass_mail" and (a.pass_mail_status or "") == "sent":
+                skipped += 1
+                line = f"skip_already_sent_pass:{a.email}"
+                log_lines.append(line)
+                yield _sse({"type": "log", "log": line, "skipped": skipped})
+                continue
+            if body.campaign_type == "other" and (a.other_mail_status or "") == "sent":
+                skipped += 1
+                line = f"skip_already_sent_other:{a.email}"
+                log_lines.append(line)
+                yield _sse({"type": "log", "log": line, "skipped": skipped})
+                continue
 
-            log_lines.append(f"skip_no_email:{a.id}")
+            html = _merge_placeholders(body.html_body, a)
+            html = html.replace("{{pass_url}}", a.pass_url or "")
+            html = html.replace("{{qr_url}}", a.qr_url or "")
 
-            if body.campaign_type == "pass_mail":
-
-                a.pass_mail_status = "skipped_no_email"
-
+            ok = False
+            if api_key:
+                try:
+                    resend.Emails.send(
+                        {
+                            "from": "noreply@ecellcgc.in",
+                            "to": a.email,
+                            "subject": _merge_placeholders(body.subject, a),
+                            "html": html,
+                        }
+                    )
+                    ok = True
+                    line = f"sent:{a.email}"
+                    log_lines.append(line)
+                except Exception as e:
+                    ok = False
+                    line = f"fail:{a.email}:{str(e)}"
+                    log_lines.append(line)
             else:
-
-                a.other_mail_status = "skipped_no_email"
-
-            continue
-
-        html = _merge_placeholders(body.html_body, a)
-
-        if body.attach_pass_link and a.pass_url:
-
-            html += (
-
-                f"<p><a href=\"{a.pass_url}\">Download your pass</a></p>"
-
-            )
-
-        if body.attach_pass_link and a.qr_url:
-
-            html += (
-
-                f"<p><img src=\"{a.qr_url}\" alt=\"QR\" style=\"max-width:200px;\" /></p>"
-
-            )
-
-        ok = False
-
-        if api_key:
-
-            try:
-
-                resend.Emails.send({
-
-                    "from": "noreply@ecellcgc.in",
-
-                    "to": a.email,
-
-                    "subject": _merge_placeholders(body.subject, a),
-
-                    "html": html,
-
-                })
-
                 ok = True
+                line = f"simulated_sent:{a.email}"
+                log_lines.append(line)
 
-                log_lines.append(f"sent:{a.email}")
+            status = "sent" if ok else "failed"
+            if body.campaign_type == "pass_mail":
+                a.pass_mail_status = status
+            else:
+                a.other_mail_status = status
+            db.commit()
 
-            except Exception as e:
+            done += 1
+            remaining = max(total - done, 0)
+            if ok:
+                sent += 1
+            else:
+                failed += 1
 
-                log_lines.append(f"fail:{a.email}:{str(e)}")
+            yield _sse(
+                {
+                    "type": "progress",
+                    "email": a.email,
+                    "done": done,
+                    "total": total,
+                    "remaining": remaining,
+                    "sent": sent,
+                    "failed": failed,
+                    "skipped": skipped,
+                    "log": line,
+                }
+            )
 
-        else:
+            if done % BATCH_SIZE == 0 and remaining > 0:
+                yield _sse(
+                    {
+                        "type": "batch",
+                        "batch_size": BATCH_SIZE,
+                        "done": done,
+                        "total": total,
+                        "remaining": remaining,
+                        "sent": sent,
+                        "failed": failed,
+                        "skipped": skipped,
+                    }
+                )
 
-            ok = True
+        campaign = MailingCampaign(
+            id=uuid.uuid4(),
+            event_id=event_id,
+            campaign_type=body.campaign_type,
+            subject=body.subject,
+            html_body=body.html_body,
+            attachment_urls=[],
+            log_lines=log_lines,
+            created_at=datetime.datetime.utcnow(),
+        )
+        db.add(campaign)
+        db.commit()
 
-            log_lines.append(f"simulated_sent:{a.email}")
+        yield _sse(
+            {
+                "type": "done",
+                "status": "ok",
+                "delivery": delivery,
+                "sent": sent,
+                "failed": failed,
+                "skipped": skipped,
+                "total": total,
+                "log_count": len(log_lines),
+            }
+        )
 
-        status = "sent" if ok else "failed"
-
-        if body.campaign_type == "pass_mail":
-
-            a.pass_mail_status = status
-
-        else:
-
-            a.other_mail_status = status
-
-        if ok:
-
-            sent += 1
-
-    campaign = MailingCampaign(
-
-        id=uuid.uuid4(),
-
-        event_id=event_id,
-
-        campaign_type=body.campaign_type,
-
-        subject=body.subject,
-
-        html_body=body.html_body,
-
-        attachment_urls=[],
-
-        log_lines=log_lines,
-
-        created_at=datetime.datetime.utcnow(),
-
+    return StreamingResponse(
+        send_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
-
-    db.add(campaign)
-
-    db.commit()
-
-    return {
-
-        "status": "ok",
-
-        "sent": sent,
-
-        "total": len(attendees),
-
-        "log": log_lines,
-
-        "delivery": "resend" if api_key else "simulated",
-
-    }
 
 
 @router.get("/{event_id}/mailing/campaigns")
