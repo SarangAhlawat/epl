@@ -35,7 +35,7 @@ origins = [
 
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://10.185.152.166:5173",
+    "getevents.vercel.app",
 
 ]
 
