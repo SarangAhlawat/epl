@@ -3,7 +3,7 @@ import axios from "axios";
 const API = axios.create({
 
   // baseURL: "http://127.0.0.1:8000"
-  baseURL: "http://10.185.152.166:8000"
+  baseURL:"https://getevents-map3.onrender.com"
 
 });
 
