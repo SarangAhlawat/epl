@@ -21,12 +21,27 @@ function EventCheckinPage() {
   const [code, setCode] = useState("");
   const [status, setStatus] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [toast, setToast] = useState(null);
 
   const videoRef = useRef(null);
   const readerRef = useRef(null);
   const controlsRef = useRef(null);
   const scanningRef = useRef(false);
-  const decodeHandledRef = useRef(false);
+  const scanLockRef = useRef(false);
+  const lastScanRef = useRef({ code: "", at: 0 });
+  const toastTimerRef = useRef(null);
+
+  const showToast = useCallback((message, kind = "info") => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setToast({ message, kind });
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 1400);
+  }, []);
 
   const search = useCallback(() => {
     API.get(`/events/${eventId}/attendees/search`, { params: { q: query } }).then((res) => {
@@ -88,15 +103,19 @@ function EventCheckinPage() {
           selected_mail_fields: mailFields,
         });
         const mailStatus = res.data?.mail_status ? ` | mail: ${res.data.mail_status}` : "";
-        setStatus(`Checked in: ${res.data.name || res.data.attendee_id}${mailStatus}`);
+        const successText = `Checked in: ${res.data.name || res.data.attendee_id}${mailStatus}`;
+        setStatus(successText);
+        showToast(`Checked in: ${res.data.name || res.data.attendee_id}`, "success");
         search();
         await loadLogs();
       } catch (e) {
         const d = e.response?.data?.detail;
-        setStatus(typeof d === "string" ? d : "Check-in failed.");
+        const errorText = typeof d === "string" ? d : "Check-in failed.";
+        setStatus(errorText);
+        showToast(errorText, "error");
       }
     },
-    [eventId, mailFields, search, loadLogs]
+    [eventId, mailFields, search, loadLogs, showToast]
   );
 
   const uncheckIn = async (payload) => {
@@ -123,7 +142,8 @@ function EventCheckinPage() {
   const stopScanner = useCallback(() => {
     scanningRef.current = false;
     setScanning(false);
-    decodeHandledRef.current = false;
+    scanLockRef.current = false;
+    lastScanRef.current = { code: "", at: 0 };
 
     try {
       controlsRef.current?.stop();
@@ -184,7 +204,8 @@ function EventCheckinPage() {
     }
 
     stopScanner();
-    decodeHandledRef.current = false;
+    scanLockRef.current = false;
+    lastScanRef.current = { code: "", at: 0 };
     scanningRef.current = true;
     setScanning(true);
     setStatus("Starting camera…");
@@ -203,34 +224,27 @@ function EventCheckinPage() {
     readerRef.current = reader;
 
     const onDecode = (result, _err, controls) => {
-      if (!result || decodeHandledRef.current || !scanningRef.current) return;
+      if (!result || !scanningRef.current) return;
       const text = result.getText();
       const parsed = parseQrPayload(text);
       if (!parsed?.unique_id) return;
 
-      decodeHandledRef.current = true;
-      scanningRef.current = false;
-      try {
-        controls.stop();
-      } catch {
-        // ignore
-      }
-      controlsRef.current = null;
-      setScanning(false);
-      try {
-        BrowserCodeReader.releaseAllStreams();
-      } catch {
-        // ignore
-      }
-      if (videoRef.current) {
-        try {
-          BrowserCodeReader.cleanVideoSource(videoRef.current);
-        } catch {
-          videoRef.current.srcObject = null;
-        }
-      }
+      const now = Date.now();
+      const last = lastScanRef.current;
+      if (scanLockRef.current) return;
+      if (last.code === parsed.unique_id && now - last.at < 1200) return;
 
-      void checkIn(parsed);
+      scanLockRef.current = true;
+      lastScanRef.current = { code: parsed.unique_id, at: now };
+      // Keep camera running for continuous scanning; release lock quickly after request.
+      void checkIn(parsed).finally(() => {
+        window.setTimeout(() => {
+          scanLockRef.current = false;
+        }, 250);
+      });
+      if (controls && typeof controls.stop !== "function") {
+        scanLockRef.current = false;
+      }
     };
 
     const setScannerError = (err) => {
@@ -306,6 +320,9 @@ function EventCheckinPage() {
 
   useEffect(
     () => () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
       stopScanner();
     },
     [stopScanner]
@@ -507,6 +524,21 @@ function EventCheckinPage() {
           <p className="mt-4 text-sm px-4 py-3 rounded-lg bg-slate-100 text-slate-800 break-words">
             {status}
           </p>
+        )}
+        {toast && (
+          <div className="fixed top-4 right-4 z-50 pointer-events-none">
+            <div
+              className={`px-3 py-2 rounded-lg shadow-lg text-sm text-white ${
+                toast.kind === "success"
+                  ? "bg-emerald-600"
+                  : toast.kind === "error"
+                    ? "bg-rose-600"
+                    : "bg-slate-900"
+              }`}
+            >
+              {toast.message}
+            </div>
+          </div>
         )}
       </div>
     </DashboardLayout>
