@@ -22,3 +22,5 @@ pillow
 
 openpyxl
 pandas
+
+psycopg2-binary
