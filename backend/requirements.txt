@@ -21,6 +21,7 @@ resend
 requests
 jinja2
 pillow
+qrcode
 
 openpyxl
 pandas
@@ -28,3 +29,4 @@ pandas
 python-dateutil
 
 aiofiles
+boto3
