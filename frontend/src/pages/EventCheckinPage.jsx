@@ -251,9 +251,41 @@ function EventCheckinPage() {
       }
     };
 
+    const isLikelyPhone =
+      /iphone|ipad|ipod|android/i.test(navigator.userAgent || "") ||
+      (typeof window !== "undefined" && window.matchMedia?.("(max-width: 900px)").matches);
+
     try {
-      // Prefer generic video first: decodeFromVideoDevice(undefined) uses facingMode
-      // 'environment', which often fails on laptops (no back camera) and yields no preview.
+      // On phones, prefer the back camera first.
+      if (isLikelyPhone) {
+        try {
+          const controls = await reader.decodeFromConstraints(
+            { video: { facingMode: { exact: "environment" } } },
+            video,
+            onDecode
+          );
+          controlsRef.current = controls;
+          setStatus("Point the camera at the attendee QR code…");
+          return;
+        } catch {
+          // fall through to "ideal" (less strict)
+        }
+
+        try {
+          const controls = await reader.decodeFromConstraints(
+            { video: { facingMode: { ideal: "environment" } } },
+            video,
+            onDecode
+          );
+          controlsRef.current = controls;
+          setStatus("Point the camera at the attendee QR code…");
+          return;
+        } catch {
+          // fall through
+        }
+      }
+
+      // Desktop-friendly: request any camera first (environment may not exist on laptops).
       const controls = await reader.decodeFromConstraints({ video: true }, video, onDecode);
       controlsRef.current = controls;
       setStatus("Point the camera at the attendee QR code…");
@@ -266,18 +298,8 @@ function EventCheckinPage() {
         controlsRef.current = controls;
         setStatus("Point the camera at the attendee QR code…");
       } catch (e2) {
-        try {
-          const controls = await reader.decodeFromConstraints(
-            { video: { facingMode: { ideal: "environment" } } },
-            video,
-            onDecode
-          );
-          controlsRef.current = controls;
-          setStatus("Point the camera at the attendee QR code…");
-        } catch (e3) {
-          stopScanner();
-          setScannerError(e3);
-        }
+        stopScanner();
+        setScannerError(e2);
       }
     }
   }, [checkIn, stopScanner]);
