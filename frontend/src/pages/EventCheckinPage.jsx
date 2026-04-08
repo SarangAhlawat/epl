@@ -11,13 +11,8 @@ function EventCheckinPage() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [logs, setLogs] = useState([]);
-  const [mailFields, setMailFields] = useState(["name", "email", "roll_number", "unique_id"]);
-  const [availableMailFields, setAvailableMailFields] = useState([
-    { key: "name", label: "name" },
-    { key: "email", label: "email" },
-    { key: "roll_number", label: "roll_number" },
-    { key: "unique_id", label: "unique_id" },
-  ]);
+  const [mailFields, setMailFields] = useState([]);
+  const [availableMailFields, setAvailableMailFields] = useState([]);
   const [code, setCode] = useState("");
   const [status, setStatus] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -56,16 +51,8 @@ function EventCheckinPage() {
 
   const loadMailFieldOptions = useCallback(async () => {
     const res = await API.get(`/events/${eventId}/attendees/sheet`);
-    const excelCols = Array.isArray(res.data?.excel_columns) ? res.data.excel_columns : [];
-    const qCols = Array.isArray(res.data?.question_columns) ? res.data.question_columns : [];
-    setAvailableMailFields([
-      { key: "name", label: "name" },
-      { key: "email", label: "email" },
-      { key: "roll_number", label: "roll_number" },
-      { key: "unique_id", label: "unique_id" },
-      ...excelCols.map((c) => ({ key: `extra:${c}`, label: c })),
-      ...qCols.map((q) => ({ key: `form:${q.id}`, label: q.label })),
-    ]);
+    const customCols = Array.isArray(res.data?.custom_columns) ? res.data.custom_columns : [];
+    setAvailableMailFields(customCols.map((c) => ({ key: `extra:${c}`, label: c })));
   }, [eventId]);
 
   useEffect(() => {
@@ -353,7 +340,7 @@ function EventCheckinPage() {
         <div className="mt-4 bg-white border border-slate-200 rounded-xl p-4">
           <p className="text-sm font-medium text-slate-900">Auto check-in confirmation mail</p>
           <p className="text-xs text-slate-500 mt-1">
-            On each check-in, a confirmation email is sent with name plus selected fields.
+            On each check-in, a confirmation email is sent with selected custom columns.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {availableMailFields.map((f) => {
@@ -441,7 +428,7 @@ function EventCheckinPage() {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Name, email, roll, or code"
+                placeholder="Search any attendee column value"
                 className="mt-2 w-full border border-slate-200 rounded-lg px-3 py-3 sm:py-2 text-sm"
               />
               <ul className="mt-3 space-y-2 max-h-56 overflow-y-auto">
@@ -453,6 +440,16 @@ function EventCheckinPage() {
                     <div>
                       <div className="font-medium text-slate-900">{a.name || "—"}</div>
                       <div className="text-slate-500 text-xs">{a.email}</div>
+                      {a.primary_column?.key ? (
+                        <div className="text-xs text-slate-600 mt-1">
+                          {a.primary_column.key}: {String(a.primary_column.value || "—")}
+                        </div>
+                      ) : null}
+                      {Array.isArray(a.matched_fields) && a.matched_fields.length > 0 ? (
+                        <div className="text-[11px] text-slate-500 mt-1">
+                          Match: {a.matched_fields.join(", ")}
+                        </div>
+                      ) : null}
                       <div className="text-xs mt-1">
                         {a.checked_in ? (
                           <span className="text-emerald-700">Checked in</span>

@@ -3,7 +3,10 @@ import io
 import uuid
 import re
 import json
+import smtplib
+import ssl
 from html import escape
+from email.mime.text import MIMEText
 import qrcode
 from fastapi import APIRouter
 from fastapi import Depends
@@ -14,10 +17,12 @@ from fastapi import UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.attendee import Attendee
 from app.models.event import Event
+from app.models.form_question import FormQuestion
 from app.models.mailing_campaign import MailingCampaign
 from app.utils.s3 import upload_bytes_to_s3
 from app.utils.s3 import upload_file_to_s3
@@ -32,27 +37,90 @@ except Exception:
 router = APIRouter()
 
 
-def _merge_placeholders(template: str, attendee: Attendee) -> str:
+def _normalize_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (value or "").strip().lower()).strip("_")
 
-    mapping = {
 
-        "{{name}}": attendee.name or "",
+def _resolve_recipient_email(
+    attendee: Attendee,
+    question_by_id: dict[str, FormQuestion] | None = None,
+) -> str:
+    if attendee.email and str(attendee.email).strip():
+        return str(attendee.email).strip()
 
-        "{{email}}": attendee.email or "",
+    extra = attendee.extra_data or {}
+    for key, val in extra.items():
+        nk = _normalize_key(str(key))
+        if nk in ("email", "email_address", "mail", "e_mail"):
+            v = str(val or "").strip()
+            if v:
+                return v
 
-        "{{roll_number}}": attendee.roll_number or "",
+    if question_by_id:
+        for fr in (attendee.form_responses or []):
+            q = question_by_id.get(str(fr.question_id))
+            if not q:
+                continue
+            qn = _normalize_key(q.question_text or "")
+            if qn == "email":
+                v = str(fr.response_value or "").strip()
+                if v:
+                    return v
 
-        "{{unique_id}}": attendee.unique_id or "",
+    return ""
 
+
+def _merge_placeholders(
+    template: str,
+    attendee: Attendee,
+    question_by_id: dict[str, FormQuestion] | None = None,
+    recipient_email: str | None = None,
+) -> str:
+    values: dict[str, str] = {
+        "name": attendee.name or "",
+        "email": recipient_email or attendee.email or "",
+        "roll_number": attendee.roll_number or "",
+        "unique_id": attendee.unique_id or "",
+        "qr_url": attendee.qr_url or "",
+        "pass_url": attendee.pass_url or "",
     }
 
-    out = template
+    for key, val in (attendee.extra_data or {}).items():
+        values[_normalize_key(str(key))] = "" if val is None else str(val)
 
-    for k, v in mapping.items():
+    if question_by_id:
+        for fr in (attendee.form_responses or []):
+            q = question_by_id.get(str(fr.question_id))
+            if not q:
+                continue
+            values[_normalize_key(q.question_text or str(fr.question_id))] = fr.response_value or ""
 
-        out = out.replace(k, v)
+    def replace_token(match):
+        token = _normalize_key(match.group(1))
+        return values.get(token, "")
 
-    return out
+    return re.sub(r"\{\{\s*([a-zA-Z0-9_\-\s]+)\s*\}\}", replace_token, template or "")
+
+
+def _send_via_gmail_smtp(
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_app_password: str,
+    to_email: str,
+    subject: str,
+    html: str,
+) -> None:
+    msg = MIMEText(html or "", "html", "utf-8")
+    msg["Subject"] = subject or ""
+    msg["From"] = smtp_user
+    msg["To"] = to_email
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP(smtp_host, int(smtp_port), timeout=30) as server:
+        server.starttls(context=context)
+        server.login(smtp_user, smtp_app_password)
+        server.sendmail(smtp_user, [to_email], msg.as_string())
 
 
 def _build_pass_svg(merged_html: str, background_url: str | None = None) -> str:
@@ -379,6 +447,10 @@ class SendMailBody(BaseModel):
     html_body: str
 
     attach_pass_link: bool = False
+    smtp_host: str
+    smtp_port: int = 587
+    smtp_user: str
+    smtp_app_password: str
 
 
 @router.post("/{event_id}/mailing/send")
@@ -406,19 +478,22 @@ def send_mails(
     BATCH_SIZE = 70
 
     def send_stream():
-        attendees = db.query(Attendee).filter(Attendee.event_id == event_id).all()
+        attendees = db.query(Attendee).options(
+            selectinload(Attendee.form_responses)
+        ).filter(Attendee.event_id == event_id).all()
+        questions = db.query(FormQuestion).filter(FormQuestion.event_id == event_id).all()
+        question_by_id = {str(q.id): q for q in questions}
 
-        api_key = None
-        if resend is not None:
-            from app.config import settings
-            api_key = settings.RESEND_API_KEY
+        if not body.smtp_host or not body.smtp_user or not body.smtp_app_password:
+            raise HTTPException(400, "smtp_details_required")
 
-        delivery = "resend" if api_key else "simulated"
+        delivery = "gmail_smtp"
 
         # Only count those that will actually be attempted (remaining recipients)
         eligible = []
         for a in attendees:
-            if not a.email:
+            recipient_email = _resolve_recipient_email(a, question_by_id)
+            if not recipient_email:
                 continue
             if body.campaign_type == "pass_mail" and (a.pass_mail_status or "") == "sent":
                 continue
@@ -436,8 +511,9 @@ def send_mails(
         yield _sse({"type": "start", "total": total, "done": 0, "remaining": total, "delivery": delivery})
 
         for i, a in enumerate(attendees):
+            recipient_email = _resolve_recipient_email(a, question_by_id)
             # skip: no email
-            if not a.email:
+            if not recipient_email:
                 skipped += 1
                 line = f"skip_no_email:{a.id}"
                 log_lines.append(line)
@@ -463,31 +539,31 @@ def send_mails(
                 yield _sse({"type": "log", "log": line, "skipped": skipped})
                 continue
 
-            html = _merge_placeholders(body.html_body, a)
-            html = html.replace("{{pass_url}}", a.pass_url or "")
-            html = html.replace("{{qr_url}}", a.qr_url or "")
+            html = _merge_placeholders(body.html_body, a, question_by_id, recipient_email=recipient_email)
+            subject_final = _merge_placeholders(
+                body.subject,
+                a,
+                question_by_id,
+                recipient_email=recipient_email,
+            )
 
             ok = False
-            if api_key:
-                try:
-                    resend.Emails.send(
-                        {
-                            "from": "noreply@ecellcgc.in",
-                            "to": a.email,
-                            "subject": _merge_placeholders(body.subject, a),
-                            "html": html,
-                        }
-                    )
-                    ok = True
-                    line = f"sent:{a.email}"
-                    log_lines.append(line)
-                except Exception as e:
-                    ok = False
-                    line = f"fail:{a.email}:{str(e)}"
-                    log_lines.append(line)
-            else:
+            try:
+                _send_via_gmail_smtp(
+                    smtp_host=body.smtp_host.strip(),
+                    smtp_port=body.smtp_port or 587,
+                    smtp_user=body.smtp_user.strip(),
+                    smtp_app_password=body.smtp_app_password,
+                    to_email=recipient_email,
+                    subject=subject_final,
+                    html=html,
+                )
                 ok = True
-                line = f"simulated_sent:{a.email}"
+                line = f"sent:{recipient_email}"
+                log_lines.append(line)
+            except Exception as e:
+                ok = False
+                line = f"fail:{recipient_email}:{str(e)}"
                 log_lines.append(line)
 
             status = "sent" if ok else "failed"
@@ -507,7 +583,7 @@ def send_mails(
             yield _sse(
                 {
                     "type": "progress",
-                    "email": a.email,
+                    "email": recipient_email,
                     "done": done,
                     "total": total,
                     "remaining": remaining,

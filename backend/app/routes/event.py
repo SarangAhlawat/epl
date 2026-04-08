@@ -137,6 +137,10 @@ def _build_checked_map(db: Session, event_id: str) -> dict[str, Checkin]:
     return out
 
 
+def _normalize_search_text(v: str) -> str:
+    return (v or "").strip().lower()
+
+
 @router.post("/create")
 
 def create_event(
@@ -155,10 +159,10 @@ def create_event(
 
     logo: UploadFile = File(...),
 
-    pass_template: UploadFile = File(...),
+    # pass_template: UploadFile = File(...),
 
-    certificate_template:
-        UploadFile = File(...),
+    # certificate_template:
+    #     UploadFile = File(...),
 
     organization_id: str = Form(...),
 
@@ -175,15 +179,15 @@ def create_event(
         "events/logos"
     )
 
-    pass_url = upload_file_to_s3(
-        pass_template,
-        "events/passes"
-    )
+    # pass_url = upload_file_to_s3(
+    #     pass_template,
+    #     "events/passes"
+    # )
 
-    certificate_url = upload_file_to_s3(
-        certificate_template,
-        "events/certificates"
-    )
+    # certificate_url = upload_file_to_s3(
+    #     certificate_template,
+    #     "events/certificates"
+    # )
 
     event = Event(
 
@@ -205,10 +209,10 @@ def create_event(
 
         logo_url=logo_url,
 
-        pass_template_url=pass_url,
+        # pass_template_url=pass_url,
 
-        certificate_template_url=
-            certificate_url,
+        # certificate_template_url=
+        #     certificate_url,
 
         created_by=created_by,
 
@@ -825,6 +829,7 @@ def attendee_sheet(
 
         "question_columns": question_columns,
         "excel_columns": excel_columns,
+        "custom_columns": excel_columns,
 
         "rows": rows,
 
@@ -849,25 +854,54 @@ def search_attendees(
 
         return []
 
-    like = f"%{q}%"
+    qn = _normalize_search_text(q)
 
-    attendees = db.query(Attendee).filter(
-
+    attendees = db.query(Attendee).options(
+        selectinload(Attendee.form_responses)
+    ).filter(
         Attendee.event_id == event_id,
+    ).all()
 
-        or_(
+    questions = db.query(FormQuestion).filter(FormQuestion.event_id == event_id).all()
+    question_by_id = {str(item.id): item for item in questions}
 
-            Attendee.name.ilike(like),
+    filtered = []
+    for a in attendees:
+        matched = False
+        primary_hits = 0
+        match_fields: list[str] = []
 
-            Attendee.email.ilike(like),
+        for label, value in (
+            ("name", a.name or ""),
+            ("email", a.email or ""),
+            ("roll_number", a.roll_number or ""),
+            ("unique_id", a.unique_id or ""),
+        ):
+            if qn in _normalize_search_text(str(value)):
+                matched = True
+                primary_hits += 1
+                match_fields.append(label)
 
-            Attendee.roll_number.ilike(like),
+        for key, value in (a.extra_data or {}).items():
+            vv = str(value or "")
+            if qn in _normalize_search_text(vv) or qn in _normalize_search_text(str(key)):
+                matched = True
+                match_fields.append(f"extra:{key}")
 
-            Attendee.unique_id.ilike(like),
+        for fr in (a.form_responses or []):
+            q_obj = question_by_id.get(str(fr.question_id))
+            q_label = q_obj.question_text if q_obj else str(fr.question_id)
+            vv = str(fr.response_value or "")
+            if qn in _normalize_search_text(vv) or qn in _normalize_search_text(q_label):
+                matched = True
+                match_fields.append(f"form:{q_label}")
 
-        ),
+        if matched:
+            filtered.append((a, primary_hits, len(match_fields), match_fields[:4]))
 
-    ).limit(30).all()
+    filtered.sort(key=lambda x: (x[1], x[2], x[0].created_at.timestamp() if x[0].created_at else 0), reverse=True)
+    attendees = [x[0] for x in filtered[:30]]
+    match_map = {str(x[0].id): x[3] for x in filtered[:30]}
 
     checked_map = _build_checked_map(db, event_id)
 
@@ -884,6 +918,11 @@ def search_attendees(
             "roll_number": a.roll_number,
 
             "unique_id": a.unique_id,
+            "primary_column": (
+                [{"key": k, "value": v} for k, v in (a.extra_data or {}).items() if str(v or "").strip()][:1]
+                or []
+            )[0] if (a.extra_data or {}) else None,
+            "matched_fields": match_map.get(str(a.id), []),
             "checked_in": bool(
                 checked_map.get(str(a.id))
                 and checked_map[str(a.id)].checked_in

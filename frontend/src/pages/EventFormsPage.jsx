@@ -23,6 +23,7 @@ function EventFormsPage() {
   const [message, setMessage] = useState("");
 
   const [error, setError] = useState("");
+  const [toast, setToast] = useState("");
 
   const load = useCallback(() => {
 
@@ -117,6 +118,8 @@ function EventFormsPage() {
       await API.post(`/form/save-form/${eventId}`, payload);
 
       setMessage("Form saved.");
+      setToast("Form saved and refreshed.");
+      setTimeout(() => setToast(""), 1600);
 
       await load();
 
@@ -167,6 +170,8 @@ function EventFormsPage() {
       setFormPublished(true);
 
       setMessage("Form published. Share the registration link below.");
+      setToast("Form published and refreshed.");
+      setTimeout(() => setToast(""), 1800);
 
       await load();
 
@@ -229,6 +234,8 @@ function EventFormsPage() {
     navigator.clipboard.writeText(regUrl);
 
     setMessage("Registration link copied.");
+    setToast("Link copied.");
+    setTimeout(() => setToast(""), 1200);
 
   };
 
@@ -311,6 +318,11 @@ function EventFormsPage() {
           saving={saving}
 
         />
+        {saving && (
+          <div className="mt-3 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+            <div className="h-full w-1/2 bg-blue-500 animate-pulse" />
+          </div>
+        )}
 
         {(message || error) && (
 
@@ -421,6 +433,11 @@ function EventFormsPage() {
         </div>
 
       </div>
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 bg-emerald-600 text-white px-3 py-2 rounded-lg shadow-lg text-sm">
+          {toast}
+        </div>
+      )}
 
     </DashboardLayout>
 

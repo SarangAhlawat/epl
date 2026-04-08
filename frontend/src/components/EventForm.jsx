@@ -182,13 +182,13 @@ function EventForm() {
 
         <option value={true}>
 
-          Public Event
+          Public Event (List on this platform along with sharable link)
 
         </option>
 
         <option value={false}>
 
-          Private Event
+          Private Event (Share only through link)
 
         </option>
 
@@ -196,13 +196,13 @@ function EventForm() {
 
       <FileUploader
 
-        label="Upload Logo"
+        label="Upload Event Cover Image"
 
         onChange={setLogo}
 
       />
 
-      <FileUploader
+      {/* <FileUploader
 
         label="Upload Pass Template"
 
@@ -216,7 +216,7 @@ function EventForm() {
 
         onChange={setCertificateTemplate}
 
-      />
+      /> */}
 
       <button
 

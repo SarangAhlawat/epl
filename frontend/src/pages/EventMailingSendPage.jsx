@@ -85,12 +85,17 @@ function EventMailingSendPage() {
   );
 
   const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
 
   const [result, setResult] = useState(null);
   const [progress, setProgress] = useState({ total: 0, done: 0, remaining: 0, sent: 0, failed: 0, skipped: 0, delivery: "" });
   const [liveLog, setLiveLog] = useState([]);
 
   const [campaigns, setCampaigns] = useState([]);
+  const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
+  const [smtpPort, setSmtpPort] = useState("587");
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpAppPassword, setSmtpAppPassword] = useState("");
 
   const loadCampaigns = useCallback(() => {
 
@@ -129,6 +134,10 @@ function EventMailingSendPage() {
           subject,
           html_body: html,
           attach_pass_link: false,
+          smtp_host: smtpHost,
+          smtp_port: Number(smtpPort || 587),
+          smtp_user: smtpUser,
+          smtp_app_password: smtpAppPassword,
         }),
       });
 
@@ -184,6 +193,8 @@ function EventMailingSendPage() {
               }
             } else if (data.type === "done") {
               setResult(data);
+              setToast("Mailing completed.");
+              setTimeout(() => setToast(""), 1800);
             }
           }
         }
@@ -228,14 +239,27 @@ function EventMailingSendPage() {
         <p className="text-slate-600 mt-2 text-sm">
           Upload or paste a full responsive HTML template. Use tokens like{" "}
           <code className="bg-slate-100 px-1 rounded text-xs">
-            {"{{name}} {{email}} {{roll_number}} {{unique_id}} {{qr_url}} {{pass_url}}"}
+            {"{{name}} {{email}} {{roll_number}} {{unique_id}} {{qr_url}} {{pass_url}} {{department_name}}"}
           </code>{" "}
           to embed the QR and pass images directly in the HTML body (example:{" "}
           <code className="bg-slate-100 px-1 rounded text-xs">
             {'<img src="{{qr_url}}" /> <img src="{{pass_url}}" />'}
           </code>
-          ). Once an attendee is mailed successfully, they are skipped on future runs.
+          ). You can merge any attendee-table column by tokenizing its name (example: "College Name"
+          becomes <code className="bg-slate-100 px-1 rounded text-xs">{"{{college_name}}"}</code>).
+          Email is resolved in this order: attendee email, Excel column "Email"/"Email Address",
+          then form question titled "Email". Once mailed successfully, attendees are skipped on
+          future runs.
         </p>
+        <div className="mt-5 p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900">
+          <p className="font-semibold">Step 1: Configure Admin Gmail SMTP</p>
+          <ol className="list-decimal ml-5 mt-2 space-y-1">
+            <li>Use admin Gmail (example: admin.events@gmail.com).</li>
+            <li>Enable 2-Step Verification in Google Account security.</li>
+            <li>Create an App Password and paste it below.</li>
+            <li>Use host <code>smtp.gmail.com</code> and port <code>587</code>.</li>
+          </ol>
+        </div>
 
         <div className="flex gap-2 mt-6">
 
@@ -286,6 +310,45 @@ function EventMailingSendPage() {
         </div>
 
         <div className="mt-6 space-y-4 bg-white border border-slate-200 rounded-2xl p-6">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="block text-sm font-medium text-slate-700">
+              SMTP Host
+              <input
+                className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2"
+                value={smtpHost}
+                onChange={(e) => setSmtpHost(e.target.value)}
+                placeholder="smtp.gmail.com"
+              />
+            </label>
+            <label className="block text-sm font-medium text-slate-700">
+              SMTP Port
+              <input
+                className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2"
+                value={smtpPort}
+                onChange={(e) => setSmtpPort(e.target.value)}
+                placeholder="587"
+              />
+            </label>
+            <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+              Admin Gmail
+              <input
+                className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2"
+                value={smtpUser}
+                onChange={(e) => setSmtpUser(e.target.value)}
+                placeholder="admin.events@gmail.com"
+              />
+            </label>
+            <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+              Gmail App Password
+              <input
+                type="password"
+                className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2"
+                value={smtpAppPassword}
+                onChange={(e) => setSmtpAppPassword(e.target.value)}
+                placeholder="xxxx xxxx xxxx xxxx"
+              />
+            </label>
+          </div>
 
           <label className="block text-sm font-medium text-slate-700">
 
@@ -362,11 +425,21 @@ function EventMailingSendPage() {
           </button>
 
           {busy && progress.total > 0 && (
-            <p className="text-sm text-slate-700">
-              Remaining: <strong>{progress.remaining}</strong> / {progress.total} — sent{" "}
-              <strong>{progress.sent}</strong>, failed <strong>{progress.failed}</strong>, skipped{" "}
-              <strong>{progress.skipped}</strong>
-            </p>
+            <div className="space-y-2">
+              <p className="text-sm text-slate-700">
+                Remaining: <strong>{progress.remaining}</strong> / {progress.total} — sent{" "}
+                <strong>{progress.sent}</strong>, failed <strong>{progress.failed}</strong>, skipped{" "}
+                <strong>{progress.skipped}</strong>
+              </p>
+              <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-300"
+                  style={{
+                    width: `${progress.total ? Math.min(100, (progress.done / progress.total) * 100) : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
           )}
 
           {liveLog.length > 0 && (
@@ -405,6 +478,11 @@ function EventMailingSendPage() {
           )}
 
         </div>
+        {toast && (
+          <div className="fixed top-4 right-4 z-50 bg-emerald-600 text-white px-3 py-2 rounded-lg shadow-lg text-sm">
+            {toast}
+          </div>
+        )}
 
         <div className="mt-10">
 

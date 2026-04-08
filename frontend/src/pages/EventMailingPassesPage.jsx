@@ -28,6 +28,7 @@ function EventMailingPassesPage() {
   const [busy, setBusy] = useState(false);
 
   const [msg, setMsg] = useState("");
+  const [toast, setToast] = useState("");
 
   const run = async () => {
 
@@ -89,6 +90,8 @@ function EventMailingPassesPage() {
               if (data.log) setLog((prev) => [...prev, data.log]);
             } else if (data.type === "done") {
               setMsg(`Generated ${data.generated} passes.`);
+              setToast("Pass generation completed.");
+              setTimeout(() => setToast(""), 1800);
             }
           }
         }
@@ -207,10 +210,20 @@ function EventMailingPassesPage() {
           </button>
 
           {busy && progress.total > 0 && (
-            <p className="text-sm text-slate-700">
-              Remaining:{" "}
-              <span className="font-semibold">{progress.remaining}</span> / {progress.total}
-            </p>
+            <div className="space-y-2">
+              <p className="text-sm text-slate-700">
+                Remaining:{" "}
+                <span className="font-semibold">{progress.remaining}</span> / {progress.total}
+              </p>
+              <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 transition-all duration-300"
+                  style={{
+                    width: `${progress.total ? Math.min(100, (progress.done / progress.total) * 100) : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
           )}
 
           {msg && <p className="text-sm text-slate-700">{msg}</p>}
@@ -230,6 +243,11 @@ function EventMailingPassesPage() {
           )}
 
         </div>
+        {toast && (
+          <div className="fixed top-4 right-4 z-50 bg-blue-600 text-white px-3 py-2 rounded-lg shadow-lg text-sm">
+            {toast}
+          </div>
+        )}
 
       </div>
 

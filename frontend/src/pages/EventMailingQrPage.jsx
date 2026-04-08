@@ -12,6 +12,7 @@ function EventMailingQrPage() {
   const [busy, setBusy] = useState(false);
 
   const [msg, setMsg] = useState("");
+  const [toast, setToast] = useState("");
 
   const [log, setLog] = useState([]);
   const [progress, setProgress] = useState({ total: 0, done: 0, remaining: 0 });
@@ -69,6 +70,8 @@ function EventMailingQrPage() {
               if (data.log) setLog((prev) => [...prev, data.log]);
             } else if (data.type === "done") {
               setMsg(`QR images generated: ${data.generated}`);
+              setToast("QR generation completed.");
+              setTimeout(() => setToast(""), 1800);
             }
           }
         }
@@ -137,10 +140,20 @@ function EventMailingQrPage() {
         </button>
 
         {busy && progress.total > 0 && (
-          <p className="mt-3 text-sm text-slate-700">
-            Remaining:{" "}
-            <span className="font-semibold">{progress.remaining}</span> / {progress.total}
-          </p>
+          <div className="mt-3 space-y-2">
+            <p className="text-sm text-slate-700">
+              Remaining:{" "}
+              <span className="font-semibold">{progress.remaining}</span> / {progress.total}
+            </p>
+            <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+              <div
+                className="h-full bg-violet-500 transition-all duration-300"
+                style={{
+                  width: `${progress.total ? Math.min(100, (progress.done / progress.total) * 100) : 0}%`,
+                }}
+              />
+            </div>
+          </div>
         )}
 
         {msg && <p className="mt-4 text-sm text-slate-700">{msg}</p>}
@@ -157,6 +170,11 @@ function EventMailingQrPage() {
 
           </div>
 
+        )}
+        {toast && (
+          <div className="fixed top-4 right-4 z-50 bg-violet-600 text-white px-3 py-2 rounded-lg shadow-lg text-sm">
+            {toast}
+          </div>
         )}
 
       </div>
